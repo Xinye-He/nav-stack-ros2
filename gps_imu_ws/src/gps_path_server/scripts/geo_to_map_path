@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from gps_path_server.geo_to_map_path import main
+if __name__ == '__main__':
+    main()
