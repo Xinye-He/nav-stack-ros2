@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robosense_driver</name>
+  <version>0.1.0</version>
+  <description>
+    visualize lidar.
+    ROS 2 driver for RoboSense LiDAR (e.g., RSM1, RS16). 
+    Uses rs_driver SDK to receive UDP packets and publish PointCloud2 messages.
+  </description>
+  <maintainer email="243040459@hdu.edu.cn">root</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <build_depend>rclcpp</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

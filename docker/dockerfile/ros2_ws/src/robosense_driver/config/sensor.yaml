@@ -1,0 +1,15 @@
+common:
+  msg_source: 1
+  send_point_cloud_ros: true
+  send_packet_ros: false
+
+lidar:
+  - driver:
+      lidar_type: RSE1
+      frame_id: rslidar
+      msop_port: 6699
+      difop_port: 7788
+      host_ip: "192.168.1.102"     # 关键！显式指定接收 IP
+      group_ip: "0.0.0.0"
+      wait_for_difop: false        # 关键！关闭等待 DIFOP
+      use_lidar_clock: false
