@@ -1,0 +1,38 @@
+# ROS / Python common ignores for this workspace
+
+# Colcon / ROS2 build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+venv/
+.venv/
+env/
+ENV/
+\.Python
+
+# pytest
+.pytest_cache/
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+*.swp
+*~
+.DS_Store
+
+# rosbags and large recorded files
+*.db3
+rosbag2_*/
+
+# temporary files from builds/install
+**/build/
+**/install/
+**/log/
