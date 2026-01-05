@@ -1,0 +1,11 @@
+robosense_driver:
+  ros__parameters:
+    input_type: 1
+    lidar_type: RSE1
+    frame_id: rslidar
+    msop_port: 6699
+    difop_port: 7788
+    host_address: "192.168.1.102"
+    group_address: "0.0.0.0"
+    wait_for_difop: false
+    use_lidar_clock: false
