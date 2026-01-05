@@ -36,3 +36,5 @@ rosbag2_*/
 **/build/
 **/install/
 **/log/
+large_files/
+lidar_ws/config/rslidar.pcap
