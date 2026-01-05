@@ -34,7 +34,7 @@ def parse_frame(data: bytes):
 
     # 3) 档速度: byte4, uint8, 0.5 km/h/LSB, offset -10
     sp_raw = b[4]
-    speed_kmh = sp_raw * 0.5 - 10.0
+    speed_kmh = sp_raw * 0.5 - 50.0
 
     # 4) 动作/请求位: byte5
     pick = b[5] & 0x03                  # bit0..1
