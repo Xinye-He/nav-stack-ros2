@@ -132,7 +132,7 @@ class WaypointPIDFollower(Node):
 
         # I/O topics
         self.declare_parameter('path_csv', '')
-        self.declare_parameter('gps_topic', '/gps/fix')
+        self.declare_parameter('gps_topic', '/fix')
         self.declare_parameter('imu_topic', '/imu/data')  # 未用RTK航向时才用
         self.declare_parameter('cmd_topic', '/cmd_vel')
 

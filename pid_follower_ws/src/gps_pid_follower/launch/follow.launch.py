@@ -29,9 +29,9 @@ def generate_launch_description():
 
         # GPS/NMEA 桥（示例）
         Node(
-            package='gps_nmea_bridge',
-            executable='gps_nmea_bridge_node',
-            name='gps_nmea_bridge',
+            package='nmea_bridge',
+            executable='nmea_bridge_node',
+            name='nmea_bridge',
             parameters=[{
                 'port': '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0',
                 'baudrate': 115200,

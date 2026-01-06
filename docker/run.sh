@@ -24,7 +24,7 @@ USER_COMMAND=""
 USER_VOLUME=""
 DEV_VOLUME=""
 ROS_DISTRO=""
-CONTAINER_IMAGE="xinye30/ucar-jetson:vcu_ctl"
+CONTAINER_IMAGE="xinye30/ucar-jetson:vcu_ctl1.1"
 
 # check for V4L2 devices
 V4L2_DEVICES=""

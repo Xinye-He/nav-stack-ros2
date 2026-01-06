@@ -8,7 +8,7 @@
     - bale_estimator (bale detection in base_link)
   </description>
 
-  <maintainer email="you@example.com">Your Name</maintainer>
+  <maintainer email="243040459@hdu.edu.cn">Xinye</maintainer>
   <license>Apache-2.0</license>
 
   <!-- Build tools -->

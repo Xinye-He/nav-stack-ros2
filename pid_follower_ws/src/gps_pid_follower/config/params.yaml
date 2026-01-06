@@ -1,12 +1,12 @@
 waypoint_pid_follower:
   ros__parameters:
     path_csv: "/root/pid_follower_ws/data/points.csv"
-    gps_topic: "/gps/fix"
+    gps_topic: "/fix"
     imu_topic: "/imu/data"
     cmd_topic: "/cmd_vel"
 
     use_rtk_heading: true
-    rtk_heading_topic: "/gps/heading_deg"
+    rtk_heading_topic: "/heading_deg"
     yaw_offset_deg: 90.0
 
     target_speed: 2.0

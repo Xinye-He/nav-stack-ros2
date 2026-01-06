@@ -30,7 +30,6 @@ Thumbs.db
 
 # rosbags and large recorded files
 *.db3
-rosbag2_*/
 
 # temporary files from builds/install
 **/build/

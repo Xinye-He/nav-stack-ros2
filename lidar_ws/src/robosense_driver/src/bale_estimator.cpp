@@ -193,7 +193,7 @@ private:
       const float r = std::hypot(p.x, p.y);
       if (r < 0.f || r > RMAX) continue;
       const int ib = std::min(NBIN - 1, std::max(0, int(r / DR)));
-      float ang = std::atan2(p.y, p.x); 
+      float ang = std::atan2(p.y, p.x);
       if (ang < 0) ang += 2.f * float(M_PI);
       const int is = std::min(SECT - 1, std::max(0, int(ang / (2.f * float(M_PI)) * SECT)));
       const float z0 = zmin[is][ib];

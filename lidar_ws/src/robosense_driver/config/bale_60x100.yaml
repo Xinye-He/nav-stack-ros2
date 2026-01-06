@@ -1,0 +1,52 @@
+# 针对：固态TOF雷达，水平120°(-60~+60)、垂直90°(-45~+45)
+# 草捆尺寸：直径约0.60m、长度约1.0m
+# 处理坐标系：统一在 base_link 下处理（节点内部将 rslidar -> base_link）
+# 算法：体素+ROI -> 扇区×径向分桶最低z(地面曲线)+距离自适应阈值 -> 两段聚类(容差随距离线性增大) -> OBB尺寸过滤
+
+bale_pose_estimator:
+  ros__parameters:
+    # 话题与坐标系
+    input_topic: "/rslidar_points"   # 输入点云
+    target_frame: "base_link"        # 统一在车体坐标系下处理
+    tf_timeout_ms: 50                # TF查询超时(ms)
+
+    # ROI与降采样（结合你的FOV：水平120°，有效距离建议≤20m）
+    r_min: 0.8        # 水平最近距离，建议≥车体前沿；可设 1.0~1.2 排除近场干扰
+    r_max: 20.0       # 水平最远距离（与你之前“目标≤20m”一致）
+    z_min: -0.8       # 高度下限，以 base_link 的z为准；为起伏地面留冗余
+    z_max: 2.5        # 高度上限，避免抬头/远处树冠等
+    voxel_leaf: 0.10  # 体素降采样(m)，0.10 提速并减碎片；若粘连严重可 0.12~0.15
+
+    # 地面剔除（扇区×径向分桶的最低z + 距离自适应阈值）
+    # 120° FOV 边缘光束更斜，远处地面起伏相对更大，阈值适当偏大
+    ground_th_base: 0.09   # 近处阈值(m)：0.06~0.10；越大剔地越狠
+    ground_th_slope: 0.005 # 随距离线性增长(m/m)：0.003~0.006
+    sector_count: 60       # 扇区数：对应120°每扇区约2°；60~72均可
+    bin_dr: 0.4            # 径向bin大小(m)：0.4~0.6；越小越细致但开销略增
+
+    # 聚类（容差=base + slope*距离），120°FOV下远处点更稀疏，容差略上调
+    cluster_tol_base: 0.28   # 近处聚类半径(m)，0.28~0.35
+    cluster_tol_slope: 0.011 # 每米距离增加的容差(m/m)，0.008~0.012
+    cluster_split: 10.0      # 近/远分界(m)，120°FOV下10m分段更合理
+    min_cluster_size: 25     # 最小点数，远处可降；误检多时提到30~40
+
+    # 尺寸过滤（OBB尺寸）
+    # L≈最长边≈草捆长度；D≈(W+H)/2≈草捆直径
+    size_diam_min: 0.54  # 直径下限(m)
+    size_diam_max: 0.66  # 直径上限(m)
+    size_len_min: 0.90   # 长度下限(m)
+    size_len_max: 1.10   # 长度上限(m)
+
+    # 可视化
+    publish_text_marker: true
+
+    # 离线回放时建议 true；在线实时设 false
+    use_sim_time: true
+    start_rviz: true
+
+    # 可选：FOV角度门限（目前代码未启用角度门控，仅记录建议；如需启用需在代码中按传感器坐标做yaw/pitch过滤）
+    # yaw_min_deg: -60.0   # 传感器坐标系下的水平角
+    # yaw_max_deg: +60.0
+    # pitch_min_deg: -45.0 # 传感器坐标系下的仰俯角
+    # pitch_max_deg: +45.0
+    # use_fov_gate: false
