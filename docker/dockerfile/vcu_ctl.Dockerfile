@@ -10,8 +10,8 @@ ENV ROS_WS /root/ros2_ws
 # 创建工作空间目录
 RUN mkdir -p $ROS_WS/src
 
-RUN rm -f /etc/apt/sources.list.d/ros2.list
 # Step 2: 更新包列表并安装必要工具（此时不能有 ros2 源！）
+RUN rm -f /etc/apt/sources.list.d/ros2.list
 RUN apt-get update && \
     apt-get install -y curl gnupg2 lsb-release && \
     rm -rf /var/lib/apt/lists/*
@@ -28,7 +28,7 @@ RUN pip3 install --timeout 500 transforms3d numpy
 RUN pip3 install --timeout 500 geographiclib numpy
 RUN pip install pyserial
 RUN sudo apt install -y libgeographic-dev libgeos-dev libproj-dev
-RUN sudo apt install -y libgraphicsmagick++-dev
+RUN sudo apt install -y libgraphicsmagick++-dev libpcap-dev
 RUN sudo apt install -y libgeographic-dev geographiclib-tools
 RUN apt-get install -y python3-can can-utils iproute2 x11-apps vim
 
