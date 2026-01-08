@@ -10,11 +10,11 @@ waypoint_pid_follower:
     yaw_offset_deg: 90.0
 
     target_speed: 2.0
-    lookahead_dist: 2.0
+    lookahead_dist: 0.5
     max_yaw_rate: 2.0
-    advance_when_close: 2.5
-    t_advance_min: 0.9
-    turn_in_place_deg: 55.0
+    advance_when_close: 0.5
+    t_advance_min: 0.95
+    turn_in_place_deg: 45.0
     min_speed: 0.5
     cte_slow_k: 0.1
     yaw_lpf_alpha: 0.4
@@ -30,7 +30,7 @@ waypoint_pid_follower:
     heading_align_dist: 1.0
     wp_reached_dist: 1.0
     wp_heading_tol_deg: 10.0
-    stop_turn_tol_deg: 5.0
+    stop_turn_tol_deg: 10.0
     wait_for_task_done: true
     task_done_topic: "/task_done"
 
@@ -45,7 +45,7 @@ waypoint_pid_follower:
     can_id_status: 0x18FED188
     link_remote_to_abort: true
 
-    dead_reckon: true
+    dead_reckon: false
     dr_alpha: 0.6
     dr_use_cmd_vel: true
     dr_use_gps_speed: true
@@ -64,7 +64,7 @@ waypoint_pid_follower:
     corner_sharp_deg_strict: 45.0
     strict_hold_deg: 2.0
 
-    emergency_spin_hdg_deg: 35.0
+    emergency_spin_hdg_deg: 55.0
     hdg_deadband_deg: 1.0
     cte_deadband_m: 0.1
     sign_hysteresis_deg: 1.0
