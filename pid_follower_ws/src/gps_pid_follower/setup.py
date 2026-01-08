@@ -29,6 +29,8 @@ setup(
             'drive_key = gps_pid_follower.drive_key:main',
             # 如未使用动作节点，注释下一行
             'bale_pick_action = gps_pid_follower.bale_pick_action:main',
+            'vcu_can_teleop = gps_pid_follower.vcu_can_teleop:main',
+            'vcu_can_sender = gps_pid_follower.can_sender:main',
         ],
     },
 )

@@ -1,30 +1,20 @@
 waypoint_pid_follower:
   ros__parameters:
+    # 路径与传感器
     path_csv: "/root/pid_follower_ws/data/points.csv"
     gps_topic: "/fix"
     imu_topic: "/imu/data"
-    cmd_topic: "/cmd_vel"
 
     use_rtk_heading: true
     rtk_heading_topic: "/heading_deg"
     yaw_offset_deg: 90.0
 
-    target_speed: 2.0
+    # 几何控制
     lookahead_dist: 0.5
-    max_yaw_rate: 2.0
     advance_when_close: 0.5
     t_advance_min: 0.95
-    turn_in_place_deg: 45.0
-    min_speed: 0.5
-    cte_slow_k: 0.1
-    yaw_lpf_alpha: 0.4
 
-    k_heading: 1.3
-    kp_cte: 0.8
-    ki_cte: 0.0
-    kd_cte: 0.3
-    i_limit: 3.0
-
+    # 任务点
     use_csv_heading: true
     align_heading_only_at_task_points: true
     heading_align_dist: 1.0
@@ -34,53 +24,56 @@ waypoint_pid_follower:
     wait_for_task_done: true
     task_done_topic: "/task_done"
 
+    # 坐标系
     map_frame: "map"
     odom_frame: "odom"
     base_frame: "base_link"
     traj_path_len: 2000
 
+    # CAN
     enable_can: true
     can_interface: "can0"
     can_extended: true
     can_id_status: 0x18FED188
     link_remote_to_abort: true
 
+    # DR（可按需求开启/关闭）
     dead_reckon: false
     dr_alpha: 0.6
-    dr_use_cmd_vel: true
     dr_use_gps_speed: true
-    dr_v_scale: 1.0
 
+    # VCU 离散控制
     vcu_enhanced_mode: true
-    vcu_angle_move_limit_deg: 25.0
+
+    # 速度档
+    vcu_speed_fast_kmh: 8.0
+    vcu_speed_slow_kmh: 4.0
+    vcu_speed_stop_kmh: 0.0
+
+    # 角度档 & 阈值（与你 stack 硬件保持一致）
+    vcu_angle_move_limit_deg: 20.0
+    vcu_turn_small_cmd_deg: 10.0
+    vcu_turn_large_cmd_deg: 20.0
+    vcu_turn_small_thresh_deg: 10.0
+    vcu_turn_large_thresh_deg: 25.0
+
+    # SPIN 进入/退出条件
     vcu_angle_spin_enter_deg: 22.0
     vcu_angle_spin_exit_deg: 18.0
-    vcu_angle_spin_cmd_deg: 30.0
-    small_keep_fast_deg: 3.0
-    angle_lpf_alpha_cmd: 0.7
+    vcu_angle_spin_cmd_deg: 20.0
 
+    # 拐角识别
     strict_corner_mode: true
     corner_start_dist: 1.0
     corner_sharp_deg_strict: 45.0
     strict_hold_deg: 2.0
 
+    # 误差阈值
     emergency_spin_hdg_deg: 55.0
     hdg_deadband_deg: 1.0
     cte_deadband_m: 0.1
     sign_hysteresis_deg: 1.0
 
-    vcu_speed_fast_kmh: 8.0
-    vcu_speed_slow_kmh: 4.0
-    vcu_speed_stop_kmh: 0.0
-
-    vcu_turn_small_thresh_deg: 10.0
-    vcu_turn_large_thresh_deg: 20.0
-    vcu_turn_small_cmd_deg: 12.0
-    vcu_turn_large_cmd_deg: 25.0
-
+    # CAN 速度编码
     vcu_speed_raw_offset_kmh: -50.0
     vcu_speed_raw_res_kmh_per_lsb: 0.5
-
-    # 新增：SPIN 入口预降速（仅在高速触发 SPIN 时生效）
-    spin_entry_slow_enable: true
-    spin_entry_slow_time_s: 0.5

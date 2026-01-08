@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import math
 import csv
 import struct
@@ -9,25 +10,17 @@ from rclpy.qos import qos_profile_sensor_data, QoSProfile, QoSDurabilityPolicy, 
 from rclpy.time import Time
 
 from sensor_msgs.msg import Imu, NavSatFix
-from geometry_msgs.msg import Twist, PoseStamped, TransformStamped, Quaternion
+from geometry_msgs.msg import PoseStamped, TransformStamped, Quaternion
 from std_msgs.msg import Bool, Float32MultiArray, UInt8, Float32
 from nav_msgs.msg import Path
 
 import tf2_ros
 
-# optional: python-can for SocketCAN
 try:
     import can
     HAVE_CAN = True
 except Exception:
     HAVE_CAN = False
-
-
-def quat_to_yaw(qx, qy, qz, qw):
-    # ENU: yaw around +Z (CCW positive)
-    s = 2.0 * (qw * qz + qx * qy)
-    c = 1.0 - 2.0 * (qy * qy + qz * qz)
-    return math.atan2(s, c)
 
 
 def yaw_to_quat(yaw: float) -> Quaternion:
@@ -40,7 +33,7 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     return q
 
 
-def wrap_pi(a):
+def wrap_pi(a: float) -> float:
     while a > math.pi:
         a -= 2.0 * math.pi
     while a < -math.pi:
@@ -49,7 +42,7 @@ def wrap_pi(a):
 
 
 def heading_csv_deg_to_enu_rad(hdg_deg: float) -> float:
-    # 输入：0°=北，90°=东，顺时针为正 -> 输出 ENU: 0=东，90°=北，逆时针为正
+    # 输入：0°=北，90°=东，顺时针为正 -> 输出 ENU: 0=东，逆时针为正
     return wrap_pi(math.radians(90.0 - hdg_deg))
 
 
@@ -99,33 +92,10 @@ class LLA2ENU:
         return e, n, u
 
 
-class PID:
-    def __init__(self, kp=0.8, ki=0.0, kd=0.3, i_limit=3.0):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.i = 0.0
-        self.prev = None
-        self.i_limit = i_limit
-
-    def reset(self):
-        self.i = 0.0
-        self.prev = None
-
-    def step(self, error, dt):
-        if dt <= 0.0:
-            dt = 1e-3
-        de = 0.0 if self.prev is None else (error - self.prev) / dt
-        self.prev = error
-        self.i += error * dt
-        self.i = max(-self.i_limit, min(self.i, self.i_limit))
-        return self.kp * error + self.ki * self.i + self.kd * de
-
-
 class WaypointPIDFollower(Node):
     DS_PAUSED = 0
     DS_RUNNING = 1
-    DS_ESTOP = 2
+    DS_ESTOP  = 2
 
     def __init__(self):
         super().__init__('waypoint_pid_follower')
@@ -133,12 +103,9 @@ class WaypointPIDFollower(Node):
         # I/O topics
         self.declare_parameter('path_csv', '')
         self.declare_parameter('gps_topic', '/fix')
-        self.declare_parameter('imu_topic', '/imu/data')  # 未用RTK航向时才用
-        self.declare_parameter('cmd_topic', '/cmd_vel')
+        self.declare_parameter('imu_topic', '/imu/data')
 
-        # Motion/limits
-        self.declare_parameter('target_speed', 2.0)
-        self.declare_parameter('max_yaw_rate', 2.0)
+        # 路段/切换
         self.declare_parameter('advance_when_close', 2.5)
         self.declare_parameter('t_advance_min', 0.9)
         self.declare_parameter('yaw_offset_deg', 0.0)
@@ -146,40 +113,27 @@ class WaypointPIDFollower(Node):
 
         # Heading policy
         self.declare_parameter('use_csv_heading', True)
-        self.declare_parameter('align_heading_only_at_task_points', True)
-        self.declare_parameter('heading_align_dist', 0.3)
+        self.declare_parameter('align_heading_only_at_task_points', True)  # 当前逻辑未使用，仅保留接口
+        self.declare_parameter('heading_align_dist', 1.0)
 
         # Task point handling
-        self.declare_parameter('wp_reached_dist', 0.3)
+        self.declare_parameter('wp_reached_dist', 0.8)
         self.declare_parameter('wp_heading_tol_deg', 10.0)
         self.declare_parameter('stop_turn_tol_deg', 5.0)
         self.declare_parameter('wait_for_task_done', True)
         self.declare_parameter('task_done_topic', '/task_done')
 
-        # Controllers
-        self.declare_parameter('k_heading', 1.3)
-        self.declare_parameter('kp_cte', 1.1)
-        self.declare_parameter('ki_cte', 0.1)
-        self.declare_parameter('kd_cte', 0.3)
-        self.declare_parameter('i_limit', 3.0)
-
-        # Tracked-base helpers
-        self.declare_parameter('turn_in_place_deg', 55.0)
-        self.declare_parameter('min_speed', 0.5)
-        self.declare_parameter('cte_slow_k', 0.1)
-        self.declare_parameter('yaw_lpf_alpha', 0.4)
-
         # Lookahead
         self.declare_parameter('lookahead_dist', 1.5)
 
-        # Frames & visualization
+        # Frames & viz
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('traj_path_len', 2000)
 
         # CAN parameters
-        self.declare_parameter('enable_can', True)
+        self.declare_parameter('enable_can', False)
         self.declare_parameter('can_interface', 'can0')
         self.declare_parameter('can_extended', True)
         self.declare_parameter('can_id_status', 0x18FED188)
@@ -188,55 +142,55 @@ class WaypointPIDFollower(Node):
         # DR parameters
         self.declare_parameter('dead_reckon', True)
         self.declare_parameter('dr_alpha', 0.6)
-        self.declare_parameter('dr_use_cmd_vel', True)
         self.declare_parameter('dr_use_gps_speed', True)
-        self.declare_parameter('dr_v_scale', 1.0)
 
         # Heading source (RTK)
         self.declare_parameter('use_rtk_heading', True)
         self.declare_parameter('rtk_heading_topic', '/gps/heading_deg')
 
-        # VCU MOVE/SPIN
+        # VCU angle/speed（按你车的定义：0/4/8 km/h + 0/±10/±20°）
         self.declare_parameter('vcu_enhanced_mode', True)
-        self.declare_parameter('vcu_angle_move_limit_deg', 18.0)
+        self.declare_parameter('vcu_angle_move_limit_deg', 20.0)
         self.declare_parameter('vcu_angle_spin_enter_deg', 22.0)
         self.declare_parameter('vcu_angle_spin_exit_deg', 18.0)
-        self.declare_parameter('vcu_angle_spin_cmd_deg', 30.0)
-        self.declare_parameter('small_keep_fast_deg', 3.0)
-        self.declare_parameter('turn_slow_deg', 10.0)
-        self.declare_parameter('corner_spin_deg', 45.0)
-        self.declare_parameter('angle_lpf_alpha_cmd', 0.5)
+        self.declare_parameter('vcu_angle_spin_cmd_deg', 20.0)  # 原地旋转用 20°
 
-        # Strict corner mode
+        # 拐角识别
         self.declare_parameter('strict_corner_mode', True)
-        self.declare_parameter('corner_start_dist', 0.5)
+        self.declare_parameter('corner_start_dist', 1.0)
         self.declare_parameter('corner_sharp_deg_strict', 45.0)
-        self.declare_parameter('strict_hold_deg', 3.0)
+        self.declare_parameter('strict_hold_deg', 2.0)  # 保留参数
 
-        # Emergency spin
-        self.declare_parameter('emergency_spin_hdg_deg', 30.0)
-
-        # Snake suppression
+        # 误差阈值
+        self.declare_parameter('emergency_spin_hdg_deg', 35.0)
         self.declare_parameter('hdg_deadband_deg', 1.0)
-        self.declare_parameter('cte_deadband_m', 0.08)
+        self.declare_parameter('cte_deadband_m', 0.1)
         self.declare_parameter('sign_hysteresis_deg', 1.0)
 
-        # Corner spin exit (保留参数但当前退出仅看航向)
-        self.declare_parameter('corner_exit_ratio', 0.7)
+        # VCU 速度档（km/h）
+        self.declare_parameter('vcu_speed_fast_kmh', 8.0)
+        self.declare_parameter('vcu_speed_slow_kmh', 4.0)
+        self.declare_parameter('vcu_speed_stop_kmh', 0.0)
 
-        # VCU 距离离散控制（新增）
-        self.declare_parameter('vcu_dist_fast_m', 11.0)  # 高速
-        self.declare_parameter('vcu_dist_slow_m', 8.0)   # 低速
-        self.declare_parameter('vcu_dist_stop_m', 0.0)   # 停止
+        # 角度阈值 & 档位（0/±10/±20°）
+        self.declare_parameter('vcu_turn_small_thresh_deg', 10.0)   # 小误差阈值
+        self.declare_parameter('vcu_turn_large_thresh_deg', 25.0)   # 大误差阈值（>25° 算“大”）
+        self.declare_parameter('vcu_turn_small_cmd_deg', 10.0)      # 实际下发档：±10°
+        self.declare_parameter('vcu_turn_large_cmd_deg', 20.0)      # 实际下发档：±20°
 
-        # Read params
+        # Pre-speed raw encoding: km/h = raw*res + offset
+        self.declare_parameter('vcu_speed_raw_offset_kmh', -50.0)
+        self.declare_parameter('vcu_speed_raw_res_kmh_per_lsb', 0.5)
+
+        # 读参数
         path_csv = self.get_parameter('path_csv').get_parameter_value().string_value
+        if not path_csv:
+            self.get_logger().error("path_csv is required.")
+            raise SystemExit
+
         self.gps_topic = self.get_parameter('gps_topic').value
         self.imu_topic = self.get_parameter('imu_topic').value
-        self.cmd_topic = self.get_parameter('cmd_topic').value
 
-        self.target_speed = float(self.get_parameter('target_speed').value)
-        self.max_yaw_rate = float(self.get_parameter('max_yaw_rate').value)
         self.advance_when_close = float(self.get_parameter('advance_when_close').value)
         self.t_advance_min = float(self.get_parameter('t_advance_min').value)
         self.yaw_offset = math.radians(float(self.get_parameter('yaw_offset_deg').value))
@@ -252,16 +206,6 @@ class WaypointPIDFollower(Node):
         self.wait_for_task_done = bool(self.get_parameter('wait_for_task_done').value)
         self.task_done_topic = self.get_parameter('task_done_topic').value
 
-        self.k_heading = float(self.get_parameter('k_heading').value)
-        kp = float(self.get_parameter('kp_cte').value)
-        ki = float(self.get_parameter('ki_cte').value)
-        kd = float(self.get_parameter('kd_cte').value)
-        i_limit = float(self.get_parameter('i_limit').value)
-
-        self.turn_in_place_th = math.radians(float(self.get_parameter('turn_in_place_deg').value))
-        self.min_speed = float(self.get_parameter('min_speed').value)
-        self.cte_slow_k = float(self.get_parameter('cte_slow_k').value)
-        self.yaw_lpf_alpha = float(self.get_parameter('yaw_lpf_alpha').value)
         self.lookahead_dist = float(self.get_parameter('lookahead_dist').value)
 
         self.map_frame = self.get_parameter('map_frame').value
@@ -269,7 +213,7 @@ class WaypointPIDFollower(Node):
         self.base_frame = self.get_parameter('base_frame').value
         self.traj_path_len = int(self.get_parameter('traj_path_len').value)
 
-        # CAN params parse
+        # CAN parse
         self.enable_can = bool(self.get_parameter('enable_can').value)
         self.can_interface = self.get_parameter('can_interface').value
         self.can_extended = bool(self.get_parameter('can_extended').value)
@@ -283,73 +227,58 @@ class WaypointPIDFollower(Node):
             self.can_id_status = 0x18FED188
         self.link_remote_to_abort = bool(self.get_parameter('link_remote_to_abort').value)
 
-        # DR state
+        # DR
         self.dead_reckon = bool(self.get_parameter('dead_reckon').value)
         self.dr_alpha = float(self.get_parameter('dr_alpha').value)
-        self.dr_use_cmd_vel = bool(self.get_parameter('dr_use_cmd_vel').value)
         self.dr_use_gps_speed = bool(self.get_parameter('dr_use_gps_speed').value)
-        self.dr_v_scale = float(self.get_parameter('dr_v_scale').value)
         self.dr_x = None
         self.dr_y = None
-        self.last_cmd_v = 0.0
         self.last_gps_speed = None
 
-        # Heading source
+        # RTK heading source
         self.use_rtk_heading = bool(self.get_parameter('use_rtk_heading').value)
         self.rtk_heading_topic = self.get_parameter('rtk_heading_topic').value
 
-        # VCU enhanced mode parameters
+        # cache VCU params
         self.vcu_enhanced_mode = bool(self.get_parameter('vcu_enhanced_mode').value)
         self.vcu_angle_move_limit_deg = float(self.get_parameter('vcu_angle_move_limit_deg').value)
         self.vcu_angle_spin_enter_deg = float(self.get_parameter('vcu_angle_spin_enter_deg').value)
         self.vcu_angle_spin_exit_deg  = float(self.get_parameter('vcu_angle_spin_exit_deg').value)
         self.vcu_angle_spin_cmd_deg   = float(self.get_parameter('vcu_angle_spin_cmd_deg').value)
-        self.small_keep_fast_deg = float(self.get_parameter('small_keep_fast_deg').value)
-        self.turn_slow_deg       = float(self.get_parameter('turn_slow_deg').value)
-        self.corner_spin_deg     = float(self.get_parameter('corner_spin_deg').value)
-        self.angle_lpf_alpha_cmd = float(self.get_parameter('angle_lpf_alpha_cmd').value)
 
-        # Strict corner mode
         self.strict_corner_mode = bool(self.get_parameter('strict_corner_mode').value)
         self.corner_start_dist = float(self.get_parameter('corner_start_dist').value)
         self.corner_sharp_rad_strict = math.radians(float(self.get_parameter('corner_sharp_deg_strict').value))
         self.strict_hold_deg = float(self.get_parameter('strict_hold_deg').value)
 
-        # Emergency spin
         self.emergency_spin_hdg_deg = float(self.get_parameter('emergency_spin_hdg_deg').value)
-
-        # Snake suppression
         self.hdg_deadband_deg = float(self.get_parameter('hdg_deadband_deg').value)
         self.cte_deadband_m = float(self.get_parameter('cte_deadband_m').value)
         self.sign_hysteresis_deg = float(self.get_parameter('sign_hysteresis_deg').value)
+        self.angle_sign = 0  # 用于左右方向滞回
 
-        # Corner exit hysteresis
-        self.corner_exit_ratio = float(self.get_parameter('corner_exit_ratio').value)
+        self.vcu_speed_fast_kmh = float(self.get_parameter('vcu_speed_fast_kmh').value)
+        self.vcu_speed_slow_kmh = float(self.get_parameter('vcu_speed_slow_kmh').value)
+        self.vcu_speed_stop_kmh = float(self.get_parameter('vcu_speed_stop_kmh').value)
 
-        # VCU distance discrete values
-        self.vcu_dist_fast_m = float(self.get_parameter('vcu_dist_fast_m').value)
-        self.vcu_dist_slow_m = float(self.get_parameter('vcu_dist_slow_m').value)
-        self.vcu_dist_stop_m = float(self.get_parameter('vcu_dist_stop_m').value)
+        self.vcu_turn_small_thresh_deg = float(self.get_parameter('vcu_turn_small_thresh_deg').value)
+        self.vcu_turn_large_thresh_deg = float(self.get_parameter('vcu_turn_large_thresh_deg').value)
+        self.vcu_turn_small_cmd_deg = float(self.get_parameter('vcu_turn_small_cmd_deg').value)
+        self.vcu_turn_large_cmd_deg = float(self.get_parameter('vcu_turn_large_cmd_deg').value)
 
-        # MOVE 能力（由 VCU 固定差速决定：ω_move=2.5°/s）
-        self.omega_move = math.radians(2.5)
-        self.kappa_move = self.omega_move / 1.0
-        self.kappa_fast = self.omega_move / 2.0
+        self.vcu_speed_raw_offset_kmh = float(self.get_parameter('vcu_speed_raw_offset_kmh').value)
+        self.vcu_speed_raw_res_kmh_per_lsb = float(self.get_parameter('vcu_speed_raw_res_kmh_per_lsb').value)
+
+        # 转向模式状态
         self.turn_mode = 'MOVE'
-        self.angle_cmd_deg_prev = 0.0
-        self.angle_sign = 0
 
-        # Corner spin lock state
-        self.in_corner_spin = False
-        self.corner_turn_sign = 0
-        self.corner_target_yaw = None
-        self.corner_wp_index = -1
+        # SPIN 状态机：IDLE / PRE_STOP / SPIN
+        self.spin_state = 'IDLE'
+        self.spin_stop_frames_left = 0
+        self.spin_use_next_seg = False  # True: 对准下一段；False: 对准当前路径
+        self.spin_sign = 0.0           # +1 / -1
 
-        if not path_csv:
-            self.get_logger().error("path_csv is required.")
-            raise SystemExit
-
-        # Waypoints
+        # waypoints
         llh = self.load_csv(path_csv)
         if len(llh) < 1:
             self.get_logger().error("No valid waypoints in CSV")
@@ -358,8 +287,7 @@ class WaypointPIDFollower(Node):
 
         lat0, lon0 = llh[0][1], llh[0][2]
         self.geo = LLA2ENU(lat0, lon0, 0.0)
-
-        self.waypoints_xy = []  # (x, y, yaw_wp_enu, pt_type)
+        self.waypoints_xy: List[Tuple[float, float, float, int]] = []
         for _, lat, lon, hdg_deg_csv, pt_type in llh:
             x, y, _ = self.geo.lla_to_enu(lat, lon, 0.0)
             yaw_enu = heading_csv_deg_to_enu_rad(hdg_deg_csv)
@@ -370,6 +298,7 @@ class WaypointPIDFollower(Node):
         self.cur_y = None
         self.cur_yaw = None
         self.last_time = self.get_clock().now()
+
         self.seg_idx = 0
         self.aligned = False
 
@@ -383,24 +312,25 @@ class WaypointPIDFollower(Node):
         self.unload_state = 0
         self.dump_state = False
 
-        # Controllers
-        self.pid_cte = PID(kp=kp, ki=ki, kd=kd, i_limit=i_limit)
-        self.yaw_rate_prev = 0.0
-
         # Subscriptions
-        self.sub_gps = self.create_subscription(NavSatFix, self.gps_topic, self.on_gps, qos_profile_sensor_data)
+        self.create_subscription(NavSatFix, self.gps_topic, self.on_gps, qos_profile_sensor_data)
         if self.use_rtk_heading:
-            self.sub_heading = self.create_subscription(Float32, self.rtk_heading_topic, self.on_rtk_heading, qos_profile_sensor_data)
-            self.get_logger().info(f"Subscribed GPS: {self.gps_topic} (sensor QoS), Heading(RTK): {self.rtk_heading_topic} (sensor QoS)")
+            self.create_subscription(Float32, self.rtk_heading_topic, self.on_rtk_heading, qos_profile_sensor_data)
         else:
-            self.sub_imu = self.create_subscription(Imu, self.imu_topic, self.on_imu, qos_profile_sensor_data)
-            self.get_logger().info(f"Subscribed GPS: {self.gps_topic} (sensor QoS), IMU: {self.imu_topic} (sensor QoS)")
+            self.create_subscription(Imu, self.imu_topic, self.on_imu, qos_profile_sensor_data)
 
-        self.sub_gps_speed = self.create_subscription(Float32, '/gps/ground_speed_mps',
-                                                      lambda m: setattr(self, 'last_gps_speed', float(m.data)),
-                                                      qos_profile_sensor_data)
+        self.create_subscription(Float32, '/gps/ground_speed_mps',
+                                 lambda m: setattr(self, 'last_gps_speed', float(m.data)),
+                                 qos_profile_sensor_data)
 
-        self.sub_cmd_mon = self.create_subscription(Twist, self.cmd_topic, self._on_cmd, 10)
+        # 动作覆盖输入（任务点等待期间，允许上位指定角度/预速）
+        self.action_override = False
+        self.action_pre_kmh = 0.0
+        self.action_angle_deg = 0.0
+        self.create_subscription(Bool,    '/action/use_override',  lambda m: setattr(self, 'action_override', bool(m.data)), 1)
+        self.create_subscription(Float32, '/action/pre_speed_kmh', lambda m: setattr(self, 'action_pre_kmh', float(m.data)), 1)
+        self.create_subscription(Float32, '/action/angle_deg',     lambda m: setattr(self, 'action_angle_deg', float(m.data)), 1)
+        self.pub_task_wait = self.create_publisher(Bool, '/at_task_waiting', 1)
 
         # Viz & TF
         qos_tl = QoSProfile(depth=1)
@@ -408,7 +338,6 @@ class WaypointPIDFollower(Node):
         qos_tl.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
         self.pub_global_path = self.create_publisher(Path, 'global_path', qos_tl)
         self.pub_traj_path   = self.create_publisher(Path, 'traj_path', 10)
-
         self.tfb = tf2_ros.TransformBroadcaster(self)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -427,18 +356,16 @@ class WaypointPIDFollower(Node):
         self.traj_path.header.frame_id = self.map_frame
         self.max_traj_len = self.traj_path_len
 
-        self.timer_global_path = self.create_timer(1.0, self._pub_global_path)
-
-        self.pub_dbg = self.create_publisher(Float32MultiArray, 'pid_debug', 10)
-
-        self.pub_cmd = self.create_publisher(Twist, self.cmd_topic, 10)
+        # timers & pubs
+        self.create_timer(1.0, self._pub_global_path)
+        self.pub_dbg = self.create_publisher(Float32MultiArray, 'ctrl_debug', 10)
 
         # Commands & task topics
-        self.sub_task  = self.create_subscription(Bool,  self.task_done_topic, self.on_task_done, 1)
-        self.sub_drive = self.create_subscription(UInt8, '/drive_cmd',         self.on_drive_cmd, 1)
-        self.sub_abort = self.create_subscription(Bool,  '/abort',             self.on_abort,     1)
-        self.create_subscription(UInt8, '/pick_cmd',   lambda m: setattr(self, 'pick_state',   int(max(0, min(3, m.data)))), 1)
-        self.create_subscription(UInt8, '/unload_cmd', lambda m: setattr(self, 'unload_state', int(max(0, min(3, m.data)))), 1)
+        self.create_subscription(Bool,  self.task_done_topic, self.on_task_done, 1)
+        self.create_subscription(UInt8, '/drive_cmd',        self.on_drive_cmd, 1)
+        self.create_subscription(Bool,  '/abort',            self.on_abort,     1)
+        self.create_subscription(UInt8, '/pick_cmd',   lambda m: setattr(self, 'pick_state',   int(max(0, min(1, m.data)))), 1)
+        self.create_subscription(UInt8, '/unload_cmd', lambda m: setattr(self, 'unload_state', int(max(0, min(1, m.data)))), 1)
         self.create_subscription(Bool,  '/remote_req', lambda m: setattr(self, 'remote_req_state', bool(m.data)), 1)
         self.create_subscription(Bool,  '/dump_cmd',   lambda m: setattr(self, 'dump_state', bool(m.data)), 1)
 
@@ -446,7 +373,7 @@ class WaypointPIDFollower(Node):
         self.can_bus = None
         if self.enable_can:
             if not HAVE_CAN:
-                self.get_logger().error("python-can not installed. apt-get install -y python3-can")
+                self.get_logger().error("python-can not installed")
             else:
                 try:
                     self.can_bus = can.Bus(channel=self.can_interface, bustype='socketcan', fd=False)
@@ -454,24 +381,22 @@ class WaypointPIDFollower(Node):
                 except Exception as e:
                     self.get_logger().error(f"Open CAN failed: {e}")
 
-        self.timer = self.create_timer(0.05, self.control_loop)  # 20 Hz
+        self.create_timer(0.05, self.control_loop)  # 20 Hz
 
-        self.get_logger().info(f"Loaded {len(self.waypoints_xy)} waypoints (sorted by index).")
-        self.get_logger().info(f"GPS: {self.gps_topic}, CMD: {self.cmd_topic}, target_speed={self.target_speed} m/s")
-        self.get_logger().info("Drive state = PAUSED. Keys: 's'(RUN), 'p'(PAUSE), 'x'(ESTOP), 'f'(/task_done)")
+        self.last_pre_kmh_sent = 0.0  # 记录上一周期发给 VCU 的预速度
+        self.get_logger().info(
+            f"Loaded {len(self.waypoints_xy)} waypoints. GPS:{self.gps_topic}, RTK:{self.rtk_heading_topic}"
+        )
 
     # ---- helpers ----
-    def _on_cmd(self, msg: Twist):
-        if self.dr_use_cmd_vel:
-            self.last_cmd_v = float(msg.linear.x)
-
     def _pub_global_path(self):
         t = self.get_clock().now().to_msg()
         self.global_path.header.stamp = t
         self.pub_global_path.publish(self.global_path)
+        # 若尚未定位，则给 VCU 发一个“静止”状态
         if self.enable_can and self.can_bus and (self.cur_x is None or self.cur_y is None or self.cur_yaw is None):
             try:
-                self.send_can_status(0.0, 0.0, 0.0)
+                self.send_can_status(0.0, 0.0, self.vcu_speed_stop_kmh)
             except Exception:
                 pass
 
@@ -483,10 +408,8 @@ class WaypointPIDFollower(Node):
                 if not row or row[0].startswith('#'):
                     continue
                 try:
-                    idx = int(row[0])
-                    lat = float(row[1]); lon = float(row[2])
-                    hdg = float(row[3])
-                    pt = int(row[4]) if len(row) > 4 else 0
+                    idx = int(row[0]); lat = float(row[1]); lon = float(row[2])
+                    hdg = float(row[3]); pt = int(row[4]) if len(row) > 4 else 0
                     wps.append((idx, lat, lon, hdg, pt))
                 except Exception:
                     continue
@@ -522,18 +445,22 @@ class WaypointPIDFollower(Node):
                     self.seg_idx += 1
                 self.drive_state = self.DS_RUNNING
                 self.task_done_latch = False
-                self.pid_cte.reset()
-                self.get_logger().info("Task done received: resume following NOW")
+                self._pub_waiting(False)
+                self.action_override = False
+                self.action_pre_kmh = 0.0
+                self.action_angle_deg = 0.0
+                self.get_logger().info("Task done: resume following")
             else:
                 self.task_done_latch = True
+
+    def _pub_waiting(self, v: bool):
+        self.pub_task_wait.publish(Bool(data=bool(v)))
 
     # ---- Sensors ----
     def on_gps(self, msg: NavSatFix):
         if msg.status.status < 0:
             return
-        alt = msg.altitude
-        if alt != alt:
-            alt = 0.0
+        alt = msg.altitude if msg.altitude == msg.altitude else 0.0
         x, y, _ = self.geo.lla_to_enu(msg.latitude, msg.longitude, alt)
         self.cur_x = x
         self.cur_y = y
@@ -548,7 +475,11 @@ class WaypointPIDFollower(Node):
     def on_imu(self, msg: Imu):
         if self.use_rtk_heading:
             return
-        yaw = quat_to_yaw(msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w)
+        q = msg.orientation
+        yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        )
         self.cur_yaw = wrap_pi(yaw + self.yaw_offset)
 
     def on_rtk_heading(self, msg: Float32):
@@ -558,12 +489,13 @@ class WaypointPIDFollower(Node):
         yaw_enu = heading_csv_deg_to_enu_rad(hdg)
         self.cur_yaw = wrap_pi(yaw_enu + self.yaw_offset)
 
-    # ---- Main control loop ----
+    # ---- 主控制循环（离散 VCU 控制）----
     def control_loop(self):
         now = self.get_clock().now()
         dt = (now - self.last_time).nanoseconds * 1e-9
         if dt <= 0.0:
             dt = 1e-3
+        now_sec = now.nanoseconds * 1e-9
         self.last_time = now
 
         if self.cur_x is None or self.cur_y is None or self.cur_yaw is None:
@@ -578,16 +510,13 @@ class WaypointPIDFollower(Node):
                 if self.drive_state == self.DS_RUNNING:
                     if self.dr_use_gps_speed and (self.last_gps_speed is not None):
                         v = self.last_gps_speed
-                    elif self.dr_use_cmd_vel:
-                        v = self.last_cmd_v * self.dr_v_scale
                 self.dr_x += v * math.cos(self.cur_yaw) * dt
                 self.dr_y += v * math.sin(self.cur_yaw) * dt
 
-        # Position
         px = self.dr_x if (self.dead_reckon and self.dr_x is not None) else self.cur_x
         py = self.dr_y if (self.dead_reckon and self.dr_y is not None) else self.cur_y
 
-        # Viz
+        # viz path（仅用于 RViz 中的轨迹显示）
         t = self.get_clock().now().to_msg()
         ps = PoseStamped()
         ps.header.stamp = t
@@ -600,11 +529,12 @@ class WaypointPIDFollower(Node):
             self.traj_path.poses.pop(0)
         self.traj_path.header.stamp = t
         self.pub_traj_path.publish(self.traj_path)
-
         self.global_path.header.stamp = t
         self.pub_global_path.publish(self.global_path)
 
         n = len(self.waypoints_xy)
+        if n == 0:
+            return
 
         # latch task_done
         if self.waiting_for_task and self.task_done_latch:
@@ -613,40 +543,53 @@ class WaypointPIDFollower(Node):
             if self.seg_idx < n - 2:
                 self.seg_idx += 1
             self.drive_state = self.DS_RUNNING
-            self.pid_cte.reset()
+            self._pub_waiting(False)
+            self.action_override = False
+            self.action_pre_kmh = 0.0
+            self.action_angle_deg = 0.0
             self.get_logger().info("Task done latch: resume following")
 
-        # dist to next
+        # 下一个路点的简单距离（用于 waiting/非运行态）
         next_idx = min(self.seg_idx + 1, n - 1) if n >= 2 else 0
-        dist_to_next = math.hypot(px - self.waypoints_xy[next_idx][0],
-                                  py - self.waypoints_xy[next_idx][1])
+        dist_to_next_simple = math.hypot(px - self.waypoints_xy[next_idx][0],
+                                         py - self.waypoints_xy[next_idx][1])
 
-        # wait/pause: STOP 距离
+        # 等待任务阶段：不做自动循迹，只发 override 或停止到 VCU
         if self.waiting_for_task:
-            self.publish_cmd(0.0, 0.0)
-            self.send_can_status(self.cur_yaw, self.vcu_dist_stop_m, 0.0)
+            # 等待期间不允许继续 spin
+            self.spin_state = 'IDLE'
+            self.angle_sign = 0
+            if self.action_override:
+                hdg_cmd = self.cur_yaw + math.radians(self.action_angle_deg)
+                pre_kmh = self.action_pre_kmh
+            else:
+                hdg_cmd = self.cur_yaw
+                pre_kmh = self.vcu_speed_stop_kmh
+            self.send_can_status(hdg_cmd, dist_to_next_simple, pre_kmh)
             self.publish_map_to_odom(px, py, self.cur_yaw)
             return
 
+        # 非 RUNNING：始终停车 + 退出 SPIN 状态
         if self.drive_state != self.DS_RUNNING:
-            self.publish_cmd(0.0, 0.0)
-            self.send_can_status(self.cur_yaw, self.vcu_dist_stop_m, 0.0)
+            self.spin_state = 'IDLE'
+            self.angle_sign = 0
+            self.send_can_status(self.cur_yaw, dist_to_next_simple, self.vcu_speed_stop_kmh)
             self.publish_map_to_odom(px, py, self.cur_yaw)
             return
 
-        # ---- RUNNING ----
+        # 只有一个路点的情况：简化为“朝向该点/其朝向”的控制
         if n == 1:
             xj, yj, yaw_wp, pt_type = self.waypoints_xy[0]
-            self.track_single(xj, yj, yaw_wp, pt_type)
+            self.control_single_point(px, py, xj, yj, yaw_wp, pt_type, now_sec)
             self.publish_map_to_odom(px, py, self.cur_yaw)
             return
 
+        # 自动对齐初始 yaw 到第一段方向（可选）
         if self.auto_align_yaw and not self.aligned and n >= 2:
             seg_hdg0 = math.atan2(self.waypoints_xy[1][1] - self.waypoints_xy[0][1],
                                   self.waypoints_xy[1][0] - self.waypoints_xy[0][0])
             self.yaw_offset += wrap_pi(seg_hdg0 - self.cur_yaw)
             self.aligned = True
-            self.get_logger().info(f"Auto-aligned yaw_offset: {math.degrees(self.yaw_offset):.2f} deg")
 
         self.seg_idx = max(0, min(self.seg_idx, n - 2))
         i = self.seg_idx
@@ -657,182 +600,330 @@ class WaypointPIDFollower(Node):
         sx = xj - xi
         sy = yj - yi
         seg_len = math.hypot(sx, sy)
-        seg_len2 = seg_len * seg_len
-        if seg_len2 < 1e-6:
+        if seg_len < 1e-6:
+            # 当前段几乎为点，跳到下一段
             if j < n - 1:
                 self.seg_idx += 1
             else:
-                self.publish_cmd(0.0, 0.0)
-                self.send_can_status(self.cur_yaw, self.vcu_dist_stop_m, 0.0)
+                # 最后一个点，停车
+                self.send_can_status(self.cur_yaw, 0.0, self.vcu_speed_stop_kmh)
             self.publish_map_to_odom(px, py, self.cur_yaw)
             return
 
+        seg_len2 = seg_len * seg_len
         rx = px - xi
         ry = py - yi
-        tproj = (rx * sx + ry * sy) / seg_len2
-        tproj = max(0.0, min(1.0, tproj))
+        tproj = max(0.0, min(1.0, (rx * sx + ry * sy) / seg_len2))
         proj_x = xi + tproj * sx
         proj_y = yi + tproj * sy
-
         cross = sx * ry - sy * rx
         cte = math.copysign(math.hypot(px - proj_x, py - proj_y), cross)
         dist_to_next = math.hypot(px - xj, py - yj)
 
-        # Desired heading
-        use_wp_heading = (self.use_csv_heading and dist_to_next < self.heading_align_dist
-                          and (pt_type_j == 1 or j == n - 1))
+        # 期望航向：任务点/终点附近用 CSV 指定方向，否则用前瞻点
+        use_wp_heading = (
+            self.use_csv_heading and
+            dist_to_next < self.heading_align_dist and
+            (pt_type_j == 1 or j == n - 1)
+        )
         if use_wp_heading:
             hdg_des = yaw_wp
-            la_x = xj; la_y = yj
         else:
-            t_la = min(1.0, tproj + (self.lookahead_dist / max(0.01, seg_len)))
-            la_x = xi + t_la * sx
-            la_y = yi + t_la * sy
+            la_t = min(1.0, tproj + (self.lookahead_dist / max(0.01, seg_len)))
+            la_x = xi + la_t * sx
+            la_y = yi + la_t * sy
             hdg_des = math.atan2(la_y - py, la_x - px)
-
         heading_error = wrap_pi(hdg_des - self.cur_yaw)
+        heading_err_deg = math.degrees(heading_error)
 
-        # /cmd_vel
-        yaw_rate_cmd = self.k_heading * heading_error + self.pid_cte.step(cte, dt)
-        yaw_rate_cmd = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate_cmd))
-
-        if abs(heading_error) > self.turn_in_place_th:
-            self.pid_cte.reset()
-            speed_cmd = 0.0
-            yaw_rate_cmd = math.copysign(self.max_yaw_rate, heading_error)
+        # 拐角几何（用于角点 SPIN 判断）
+        has_next_seg = (j < n - 1)
+        psi1 = math.atan2(sy, sx)
+        if has_next_seg:
+            sx2 = self.waypoints_xy[j + 1][0] - xj
+            sy2 = self.waypoints_xy[j + 1][1] - yj
+            psi2 = math.atan2(sy2, sx2)
+            dpsi = wrap_pi(psi2 - psi1)
+            hdg_err_to_next_deg = math.degrees(wrap_pi(psi2 - self.cur_yaw))
         else:
-            speed_cmd = self.target_speed
-            scale = 1.0 - self.cte_slow_k * abs(cte)
-            min_ratio = self.min_speed / max(0.05, self.target_speed)
-            scale = max(min_ratio, min(1.0, scale))
-            speed_cmd *= scale
+            psi2 = psi1
+            dpsi = 0.0
+            hdg_err_to_next_deg = heading_err_deg
+        corner_angle_deg = math.degrees(dpsi)
 
-        # Task point
+        # 任务点：靠近时进入“到点+对正+等待”逻辑
         if pt_type_j == 1:
             hdg_err_to_wp = wrap_pi(yaw_wp - self.cur_yaw)
+            hdg_err_to_wp_deg = math.degrees(hdg_err_to_wp)
             if dist_to_next <= self.wp_reached_dist:
-                if abs(hdg_err_to_wp) > self.stop_turn_tol:
-                    speed_cmd = 0.0
-                    yaw_rate_cmd = math.copysign(min(self.max_yaw_rate, abs(hdg_err_to_wp) * self.k_heading), hdg_err_to_wp)
+                # 未对正：用原地大旋转对正（同样遵守 SPIN 规则）
+                if abs(hdg_err_to_wp_deg) > self.stop_turn_tol_deg:
+                    # 这里简单用 emergency spin 判定：把 heading_err_deg 换成对 wp 的误差传入
+                    pre_kmh, angle_send_deg = self.decide_vcu_action(
+                        heading_err_deg=hdg_err_to_wp_deg,
+                        hdg_err_to_next_deg=hdg_err_to_wp_deg,
+                        cte=cte,
+                        dist_to_next=dist_to_next,
+                        corner_angle_deg=0.0,
+                        has_next_seg=False,
+                        now_sec=now_sec
+                    )
+                    angle_send_deg = max(-self.vcu_angle_move_limit_deg,
+                                         min(self.vcu_angle_move_limit_deg, angle_send_deg))
+                    hdg_cmd_for_can = self.cur_yaw + math.radians(angle_send_deg)
+                    self.send_can_status(hdg_cmd_for_can, dist_to_next, pre_kmh)
+                    self.publish_map_to_odom(px, py, self.cur_yaw)
+                    return
                 else:
-                    speed_cmd = 0.0
-                    yaw_rate_cmd = 0.0
+                    # 位置和姿态都满足，到点等待任务
                     self.waiting_for_task = True
                     self.drive_state = self.DS_PAUSED
-                    self.pid_cte.reset()
-                    self.get_logger().info(f"Arrived task point {j}: paused (drive=0), waiting {self.task_done_topic}=True")
-        else:
-            if not self.in_corner_spin:
-                if (self.seg_idx < n - 2) and (tproj > self.t_advance_min and dist_to_next < self.advance_when_close):
-                    self.seg_idx += 1
-                    self.pid_cte.reset()
-                elif self.seg_idx == n - 2 and dist_to_next < max(0.8, 0.5 * self.advance_when_close):
-                    speed_cmd = max(self.min_speed, min(speed_cmd, self.target_speed * (dist_to_next / 3.0)))
-                    if dist_to_next < 0.5:
-                        speed_cmd = 0.0
-                        yaw_rate_cmd = 0.0
-                        self.seg_idx += 1
-                        self.pid_cte.reset()
+                    self.spin_state = 'IDLE'
+                    self.angle_sign = 0
+                    self._pub_waiting(True)
+                    self.send_can_status(self.cur_yaw, dist_to_next, self.vcu_speed_stop_kmh)
+                    self.publish_map_to_odom(px, py, self.cur_yaw)
+                    return
+            # 未到点，仍按常规离散控制继续靠近
 
-        # LPF
-        yaw_rate_cmd = self.yaw_lpf_alpha * self.yaw_rate_prev + (1.0 - self.yaw_lpf_alpha) * yaw_rate_cmd
-        self.yaw_rate_prev = yaw_rate_cmd
+        # 普通点：段切换
+        if pt_type_j != 1:
+            if (self.seg_idx < n - 2) and (tproj > self.t_advance_min and dist_to_next < self.advance_when_close):
+                # 足够接近下一路点，切到下一段
+                self.seg_idx += 1
+                self.publish_map_to_odom(px, py, self.cur_yaw)
+                return
 
-        # Debug
+        # 最后一段末端减速 + 停车（仍然是离散档速度）
+        is_last_segment = (self.seg_idx == n - 2)
+        if is_last_segment:
+            # 很靠近终点：停车
+            if dist_to_next < 0.5:
+                self.spin_state = 'IDLE'
+                self.angle_sign = 0
+                self.send_can_status(self.cur_yaw, dist_to_next, self.vcu_speed_stop_kmh)
+                self.publish_map_to_odom(px, py, self.cur_yaw)
+                return
+            # 进入 1 m 左右区域：强制慢速直行靠近
+            if dist_to_next < max(0.8, 0.5 * self.advance_when_close):
+                self.spin_state = 'IDLE'
+                self.angle_sign = 0
+                self.send_can_status(self.cur_yaw, dist_to_next, self.vcu_speed_slow_kmh)
+                self.publish_map_to_odom(px, py, self.cur_yaw)
+                return
+
+        # ---- 核心：基于误差的 VCU 离散动作决策 ----
+        pre_kmh, angle_send_deg = self.decide_vcu_action(
+            heading_err_deg=heading_err_deg,
+            hdg_err_to_next_deg=hdg_err_to_next_deg,
+            cte=cte,
+            dist_to_next=dist_to_next,
+            corner_angle_deg=corner_angle_deg,
+            has_next_seg=has_next_seg,
+            now_sec=now_sec
+        )
+
+        # 限制角度在 VCU 允许范围内
+        angle_send_deg = max(-self.vcu_angle_move_limit_deg,
+                             min(self.vcu_angle_move_limit_deg, angle_send_deg))
+
+        # 发送到 VCU：目标航向 = 当前 + 方向档
+        hdg_cmd_for_can = self.cur_yaw + math.radians(angle_send_deg)
+        self.send_can_status(hdg_cmd_for_can, dist_to_next, pre_kmh)
+
+        # debug 输出：cte, heading_err_deg, seg_idx, dist_to_next, pre_kmh, angle_send_deg, spin_state
         dbg = Float32MultiArray()
-        dbg.data = [float(cte), float(heading_error), float(self.seg_idx), float(dist_to_next), float(tproj)]
+        dbg.data = [
+            float(cte),
+            float(heading_err_deg),
+            float(self.seg_idx),
+            float(dist_to_next),
+            float(pre_kmh),
+            float(angle_send_deg),
+            float({'IDLE': 0, 'PRE_STOP': 1, 'SPIN': 2}[self.spin_state])
+        ]
         self.pub_dbg.publish(dbg)
 
-        # Publish /cmd_vel
-        self.publish_cmd(speed_cmd, yaw_rate_cmd)
-
-        # ---- VCU angle + distance (discrete distance: 11/8/0 m) ----
-        if self.vcu_enhanced_mode:
-            # Corner logic (lock, emergency, suppression)
-            psi1 = math.atan2(sy, sx)
-            psi2 = psi1
-            has_next = (j < n - 1)
-            if has_next:
-                sx2 = self.waypoints_xy[j+1][0] - xj
-                sy2 = self.waypoints_xy[j+1][1] - yj
-                psi2 = math.atan2(sy2, sx2)
-            dpsi = wrap_pi(psi2 - psi1)
-
-            is_corner_area = has_next and (abs(dpsi) >= self.corner_sharp_rad_strict) and (dist_to_next <= self.corner_start_dist)
-            hdg_err_to_next = wrap_pi(psi2 - self.cur_yaw)
-            hdg_err_to_next_deg = abs(math.degrees(hdg_err_to_next))
-            hdg_err_deg_signed = math.degrees(heading_error)
-            want_spin_emergency = (abs(hdg_err_deg_signed) >= self.emergency_spin_hdg_deg) and (not self.in_corner_spin) and (not is_corner_area)
-
-            angle_cmd_deg = 0.0
-
-            if self.in_corner_spin:
-                self.turn_mode = 'SPIN'
-                angle_cmd_deg = float(self.corner_turn_sign) * self.vcu_angle_spin_cmd_deg
-                # 退出只看航向是否对齐
-                hdg_err_to_target = wrap_pi(self.corner_target_yaw - self.cur_yaw)
-                if abs(math.degrees(hdg_err_to_target)) <= self.vcu_angle_spin_exit_deg:
-                    self.in_corner_spin = False
-                    self.corner_turn_sign = 0
-                    self.corner_target_yaw = None
-                    self.corner_wp_index = -1
-            else:
-                if want_spin_emergency:
-                    self.turn_mode = 'SPIN'
-                    sign_now = 1 if (heading_error > 0.0) else -1
-                    angle_cmd_deg = float(sign_now) * self.vcu_angle_spin_cmd_deg
-                elif is_corner_area and (hdg_err_to_next_deg >= self.vcu_angle_spin_enter_deg):
-                    self.in_corner_spin = True
-                    self.corner_turn_sign = 1 if dpsi > 0.0 else -1
-                    self.corner_target_yaw = psi2
-                    self.corner_wp_index = j
-                    self.turn_mode = 'SPIN'
-                    angle_cmd_deg = float(self.corner_turn_sign) * self.vcu_angle_spin_cmd_deg
-                else:
-                    self.turn_mode = 'MOVE'
-                    if abs(hdg_err_deg_signed) <= self.hdg_deadband_deg and abs(cte) <= self.cte_deadband_m:
-                        angle_cmd_deg = 0.0
-                        self.angle_sign = 0
-                    else:
-                        if self.angle_sign >= 0 and hdg_err_deg_signed >  self.sign_hysteresis_deg:
-                            self.angle_sign = +1
-                        elif self.angle_sign <= 0 and hdg_err_deg_signed < -self.sign_hysteresis_deg:
-                            self.angle_sign = -1
-                        if self.angle_sign == 0:
-                            self.angle_sign = 1 if hdg_err_deg_signed >= 0.0 else -1
-                        small = min(self.strict_hold_deg, 5.0)
-                        angle_cmd_deg = float(self.angle_sign) * small
-                    angle_cmd_deg = max(-self.vcu_angle_move_limit_deg,
-                                        min(self.vcu_angle_move_limit_deg, angle_cmd_deg))
-
-            # 角度低通
-            a = max(0.0, min(1.0, self.angle_lpf_alpha_cmd))
-            angle_cmd_deg = a * self.angle_cmd_deg_prev + (1.0 - a) * angle_cmd_deg
-            self.angle_cmd_deg_prev = angle_cmd_deg
-
-            # 距离三态映射（核心改动）
-            if speed_cmd <= 1e-3:
-                dist_for_vcu = self.vcu_dist_stop_m
-            else:
-                if self.turn_mode == 'SPIN' or abs(angle_cmd_deg) > 5.0:
-                    dist_for_vcu = self.vcu_dist_slow_m
-                else:
-                    dist_for_vcu = self.vcu_dist_fast_m
-
-            # 发给 VCU：正=右转，负=左转
-            hdg_cmd_for_can = self.cur_yaw + math.radians(angle_cmd_deg)
-            self.send_can_status(hdg_cmd_for_vcu=hdg_cmd_for_can, dist_to_next_m=dist_for_vcu, speed_cmd_mps=speed_cmd)
-        else:
-            # 非增强模式也使用离散距离（按 heading_error 粗判）
-            angle_deg_abs = abs(math.degrees(heading_error))
-            if speed_cmd <= 1e-3:
-                dist_for_vcu = self.vcu_dist_stop_m
-            else:
-                dist_for_vcu = self.vcu_dist_fast_m if angle_deg_abs <= 5.0 else self.vcu_dist_slow_m
-            self.send_can_status(hdg_des, dist_for_vcu, speed_cmd)
-
-        # map->odom
         self.publish_map_to_odom(px, py, self.cur_yaw)
+
+    # ---- 离散动作决策函数 + SPIN 状态机 ----
+    def decide_vcu_action(self,
+                           heading_err_deg: float,
+                           hdg_err_to_next_deg: float,
+                           cte: float,
+                           dist_to_next: float,
+                           corner_angle_deg: float,
+                           has_next_seg: bool,
+                           now_sec: float):
+        """
+        根据航向误差、横向误差、拐角几何，输出 (pre_kmh, angle_send_deg)
+        angle_send_deg > 0 右转，<0 左转。
+        """
+
+        abs_hdg = abs(heading_err_deg)
+        abs_hdg_next = abs(hdg_err_to_next_deg)
+
+        # --- 0. SPIN 状态机优先级最高 ---
+
+        # 0.1 PRE_STOP：发送两帧 0 速 0 角
+        if self.spin_state == 'PRE_STOP':
+            self.turn_mode = 'SPIN'
+            self.spin_stop_frames_left -= 1
+            if self.spin_stop_frames_left <= 0:
+                # 进入真正 SPIN
+                self.spin_state = 'SPIN'
+            return self.vcu_speed_stop_kmh, 0.0  # 两帧都 0/0
+
+        # 0.2 SPIN：速度 0，固定 ±spin_cmd 角
+        if self.spin_state == 'SPIN':
+            # 根据启动时记录的目标类型选择误差
+            cur_err = abs_hdg_next if self.spin_use_next_seg else abs_hdg
+            # 误差小于退出阈值，结束 SPIN
+            if cur_err <= self.vcu_angle_spin_exit_deg:
+                self.spin_state = 'IDLE'
+                self.angle_sign = 0
+                # 结束后转入 MOVE 决策
+            else:
+                self.turn_mode = 'SPIN'
+                angle_deg = self.spin_sign * self.vcu_angle_spin_cmd_deg
+                return self.vcu_speed_stop_kmh, angle_deg
+
+        # --- 1. 只有在 IDLE 才会考虑启动新的 SPIN ---
+        self.turn_mode = 'MOVE'
+
+        # 1.1 拐角区域判定（仅角度和距离，不直接触发 SPIN）
+        is_corner_area = False
+        if self.strict_corner_mode and has_next_seg:
+            if abs(math.radians(corner_angle_deg)) >= self.corner_sharp_rad_strict \
+               and dist_to_next <= self.corner_start_dist:
+                is_corner_area = True
+
+        # 1.2 只有当误差也足够大时，角点才触发 SPIN
+        want_spin_corner = is_corner_area and (abs_hdg_next >= self.vcu_angle_spin_enter_deg)
+
+        # 1.3 紧急 SPIN：当前路径方向误差过大
+        want_spin_emergency = abs_hdg >= self.emergency_spin_hdg_deg
+
+        # 1.4 由 MOVE 进入 SPIN 状态机
+        if self.spin_state == 'IDLE' and (want_spin_corner or want_spin_emergency):
+            # 根据前一帧发送速度决定是否需要 PRE_STOP
+            already_stop = abs(self.last_pre_kmh_sent) < 0.1
+            if want_spin_corner:
+                self.spin_use_next_seg = True
+                self.spin_sign = 1.0 if hdg_err_to_next_deg > 0.0 else -1.0
+            else:
+                self.spin_use_next_seg = False
+                self.spin_sign = 1.0 if heading_err_deg > 0.0 else -1.0
+
+            if already_stop:
+                # 已经是 0 速，直接进入 SPIN
+                self.spin_state = 'SPIN'
+                angle_deg = self.spin_sign * self.vcu_angle_spin_cmd_deg
+                self.turn_mode = 'SPIN'
+                return self.vcu_speed_stop_kmh, angle_deg
+            else:
+                # 从低速/高速切换到原地 SPIN：先发两帧 0 速 0 角
+                self.spin_state = 'PRE_STOP'
+                self.spin_stop_frames_left = 2
+                self.turn_mode = 'SPIN'
+                return self.vcu_speed_stop_kmh, 0.0
+
+        # --- 2. MOVE 模式：根据误差大小选择直行/小弯/大弯 ---
+
+        # 基本对中：认为无需转向，直行快
+        if abs_hdg <= self.hdg_deadband_deg and abs(cte) <= self.cte_deadband_m:
+            self.angle_sign = 0
+            return self.vcu_speed_fast_kmh, 0.0  # 8km/h, 0°
+
+        # 更新方向符号，带滞回，避免左右抖动
+        sign = self.update_angle_sign(heading_err_deg)
+
+        # 误差分段：
+        #  1) < small_thresh: 用 8km/h + ±10° 做轻微修正
+        #  2) [small_thresh, large_thresh): 用 4km/h + ±10° 慢速修正
+        #  3) ≥ large_thresh: 用 4km/h + ±20° 慢速大弯
+        if abs_hdg < self.vcu_turn_small_thresh_deg:
+            angle_deg = sign * self.vcu_turn_small_cmd_deg
+            pre_kmh = self.vcu_speed_fast_kmh
+        elif abs_hdg < self.vcu_turn_large_thresh_deg:
+            angle_deg = sign * self.vcu_turn_small_cmd_deg
+            pre_kmh = self.vcu_speed_slow_kmh
+        else:
+            angle_deg = sign * self.vcu_turn_large_cmd_deg
+            pre_kmh = self.vcu_speed_slow_kmh
+
+        # 若横向误差较大，可强制降速
+        if abs(cte) > 0.5:
+            pre_kmh = min(pre_kmh, self.vcu_speed_slow_kmh)
+
+        return pre_kmh, angle_deg
+
+    def update_angle_sign(self, heading_err_deg: float) -> int:
+        """带滞回的左右方向判定，避免在 0° 附近抖动"""
+        if self.angle_sign >= 0 and heading_err_deg > self.sign_hysteresis_deg:
+            self.angle_sign = +1
+        elif self.angle_sign <= 0 and heading_err_deg < -self.sign_hysteresis_deg:
+            self.angle_sign = -1
+        if self.angle_sign == 0:
+            self.angle_sign = 1 if heading_err_deg >= 0.0 else -1
+        return self.angle_sign
+
+    def control_single_point(self, px, py, xj, yj, yaw_wp, pt_type, now_sec: float):
+        """只有一个路点的情况的离散控制"""
+        dist = math.hypot(px - xj, py - yj)
+        seg_hdg = math.atan2(yj - py, xj - px)
+        use_wp_heading = (
+            self.use_csv_heading and
+            dist < self.heading_align_dist and
+            (pt_type == 1)
+        )
+        hdg_des = yaw_wp if use_wp_heading else seg_hdg
+        heading_error = wrap_pi(hdg_des - self.cur_yaw)
+        heading_err_deg = math.degrees(heading_error)
+
+        # 任务点：到点后对正+等待
+        if pt_type == 1 and dist <= self.wp_reached_dist:
+            hdg_err_to_wp = wrap_pi(yaw_wp - self.cur_yaw)
+            hdg_err_to_wp_deg = math.degrees(hdg_err_to_wp)
+            if abs(hdg_err_to_wp_deg) > self.stop_turn_tol_deg:
+                # 利用 SPIN 状态机对正
+                pre_kmh, angle_deg = self.decide_vcu_action(
+                    heading_err_deg=hdg_err_to_wp_deg,
+                    hdg_err_to_next_deg=hdg_err_to_wp_deg,
+                    cte=0.0,
+                    dist_to_next=dist,
+                    corner_angle_deg=0.0,
+                    has_next_seg=False,
+                    now_sec=now_sec
+                )
+                angle_deg = max(-self.vcu_angle_move_limit_deg,
+                                min(self.vcu_angle_move_limit_deg, angle_deg))
+                self.send_can_status(self.cur_yaw + math.radians(angle_deg),
+                                     dist,
+                                     pre_kmh)
+            else:
+                self.waiting_for_task = True
+                self.drive_state = self.DS_PAUSED
+                self.spin_state = 'IDLE'
+                self.angle_sign = 0
+                self._pub_waiting(True)
+                self.send_can_status(self.cur_yaw, dist, self.vcu_speed_stop_kmh)
+            return
+
+        # 非任务点，或者未到点：复用多段逻辑中的决策
+        pre_kmh, angle_send_deg = self.decide_vcu_action(
+            heading_err_deg=heading_err_deg,
+            hdg_err_to_next_deg=heading_err_deg,
+            cte=0.0,
+            dist_to_next=dist,
+            corner_angle_deg=0.0,
+            has_next_seg=False,
+            now_sec=now_sec
+        )
+        angle_send_deg = max(-self.vcu_angle_move_limit_deg,
+                             min(self.vcu_angle_move_limit_deg, angle_send_deg))
+        hdg_cmd_for_can = self.cur_yaw + math.radians(angle_send_deg)
+        self.send_can_status(hdg_cmd_for_can, dist, pre_kmh)
 
     def publish_map_to_odom(self, px: float, py: float, yaw_map_base: float):
         try:
@@ -840,10 +931,14 @@ class WaypointPIDFollower(Node):
             tx_ob = tf_ob.transform.translation.x
             ty_ob = tf_ob.transform.translation.y
             rz = tf_ob.transform.rotation
-            yaw_ob = math.atan2(2.0 * (rz.w * rz.z + rz.x * rz.y), 1.0 - 2.0 * (rz.y * rz.y + rz.z * rz.z))
+            yaw_ob = math.atan2(
+                2.0 * (rz.w * rz.z + rz.x * rz.y),
+                1.0 - 2.0 * (rz.y * rz.y + rz.z * rz.z)
+            )
 
             yaw_mo = wrap_pi(yaw_map_base - yaw_ob)
-            cos_mo = math.cos(yaw_mo); sin_mo = math.sin(yaw_mo)
+            cos_mo = math.cos(yaw_mo)
+            sin_mo = math.sin(yaw_mo)
             tmo_x = px - (cos_mo * tx_ob - sin_mo * ty_ob)
             tmo_y = py - (sin_mo * tx_ob + cos_mo * ty_ob)
 
@@ -859,135 +954,70 @@ class WaypointPIDFollower(Node):
         except Exception:
             pass
 
-    def track_single(self, xj, yj, yaw_wp, pt_type):
-        px = self.dr_x if (self.dead_reckon and self.dr_x is not None) else self.cur_x
-        py = self.dr_y if (self.dead_reckon and self.dr_y is not None) else self.cur_y
-        dist = math.hypot(px - xj, py - yj)
-
-        seg_hdg = math.atan2(yj - py, xj - px)
-        use_wp_heading = (self.use_csv_heading and dist < self.heading_align_dist and (pt_type == 1))
-        hdg_des = yaw_wp if use_wp_heading else seg_hdg
-        heading_error = wrap_pi(hdg_des - self.cur_yaw)
-
-        yaw_rate_cmd = max(-self.max_yaw_rate, min(self.max_yaw_rate, self.k_heading * heading_error))
-        if abs(heading_error) > self.turn_in_place_th:
-            speed_cmd = 0.0
-            yaw_rate_cmd = math.copysign(self.max_yaw_rate, heading_error)
-            self.pid_cte.reset()
-        else:
-            speed_cmd = self.target_speed * max(self.min_speed / max(0.05, self.target_speed), min(1.0, dist / 3.0))
-
-        if self.drive_state != self.DS_RUNNING:
-            speed_cmd = 0.0; yaw_rate_cmd = 0.0
-        self.publish_cmd(speed_cmd, yaw_rate_cmd)
-
-        if self.vcu_enhanced_mode:
-            hdg_err_deg_signed = math.degrees(heading_error)
-            want_spin_emergency = abs(hdg_err_deg_signed) >= self.emergency_spin_hdg_deg
-
-            dx = xj - px; dy = yj - py
-            cy = math.cos(self.cur_yaw); sy = math.sin(self.cur_yaw)
-            x_b =  cy*dx + sy*dy
-            y_b = -sy*dx + cy*dy
-
-            if want_spin_emergency and dist > self.corner_start_dist:
-                self.turn_mode = 'SPIN'
-                angle_cmd_deg = math.copysign(self.vcu_angle_spin_cmd_deg, hdg_err_deg_signed)
-            else:
-                if dist <= self.corner_start_dist and abs(hdg_err_deg_signed) >= self.vcu_angle_spin_enter_deg:
-                    self.turn_mode = 'SPIN'
-                    angle_cmd_deg = math.copysign(self.vcu_angle_spin_cmd_deg, hdg_err_deg_signed)
-                else:
-                    self.turn_mode = 'MOVE'
-                    if abs(hdg_err_deg_signed) <= self.hdg_deadband_deg and abs(y_b) <= self.cte_deadband_m:
-                        angle_cmd_deg = 0.0
-                        self.angle_sign = 0
-                    else:
-                        if self.angle_sign >= 0 and hdg_err_deg_signed >  self.sign_hysteresis_deg:
-                            self.angle_sign = +1
-                        elif self.angle_sign <= 0 and hdg_err_deg_signed < -self.sign_hysteresis_deg:
-                            self.angle_sign = -1
-                        if self.angle_sign == 0:
-                            self.angle_sign = 1 if hdg_err_deg_signed >= 0.0 else -1
-                        small = min(self.strict_hold_deg, 5.0)
-                        angle_cmd_deg = float(self.angle_sign) * small
-                    angle_cmd_deg = max(-self.vcu_angle_move_limit_deg,
-                                        min(self.vcu_angle_move_limit_deg, angle_cmd_deg))
-
-            a = max(0.0, min(1.0, self.angle_lpf_alpha_cmd))
-            angle_cmd_deg = a * self.angle_cmd_deg_prev + (1.0 - a) * angle_cmd_deg
-            self.angle_cmd_deg_prev = angle_cmd_deg
-
-            # 距离离散
-            if speed_cmd <= 1e-3:
-                dist_for_vcu = self.vcu_dist_stop_m
-            else:
-                if self.turn_mode == 'SPIN' or abs(angle_cmd_deg) > 5.0:
-                    dist_for_vcu = self.vcu_dist_slow_m
-                else:
-                    dist_for_vcu = self.vcu_dist_fast_m
-
-            hdg_cmd_for_can = self.cur_yaw + math.radians(angle_cmd_deg)
-            self.send_can_status(hdg_cmd_for_can, dist_for_vcu, speed_cmd)
-        else:
-            angle_deg_abs = abs(math.degrees(heading_error))
-            if speed_cmd <= 1e-3:
-                dist_for_vcu = self.vcu_dist_stop_m
-            else:
-                dist_for_vcu = self.vcu_dist_fast_m if angle_deg_abs <= 5.0 else self.vcu_dist_slow_m
-            self.send_can_status(hdg_des, dist_for_vcu, speed_cmd)
-
-        if pt_type == 1 and dist <= self.wp_reached_dist:
-            hdg_err_to_wp = wrap_pi(yaw_wp - self.cur_yaw)
-            if abs(hdg_err_to_wp) > self.stop_turn_tol:
-                self.publish_cmd(0.0, math.copysign(self.max_yaw_rate, hdg_err_to_wp))
-            else:
-                self.publish_cmd(0.0, 0.0)
-                self.waiting_for_task = True
-                self.drive_state = self.DS_PAUSED
-                self.pid_cte.reset()
-
-    def publish_cmd(self, speed, yaw_rate):
-        msg = Twist()
-        msg.linear.x = float(speed)
-        msg.angular.z = float(yaw_rate)
-        self.pub_cmd.publish(msg)
-
     # --- CAN helpers ---
-    def send_can_status(self, hdg_cmd_for_vcu=None, dist_to_next_m=0.0, speed_cmd_mps=0.0):
+    def send_can_status(self, hdg_des_rad, dist_to_next_m, pre_kmh):
         if not (self.enable_can and self.can_bus):
             return
-        # 兼容老签名：允许直接传期望航向或使用 hdg_des_rad 参数名
-        if hdg_cmd_for_vcu is None:
-            hdg_cmd_for_vcu = 0.0
+
+        # 若处于 ESTOP：强制速度 0、方向 0
+        if self.drive_state == self.DS_ESTOP:
+            pre_kmh = self.vcu_speed_stop_kmh
+            dist_to_next_m = 0.0
+            if self.cur_yaw is not None:
+                hdg_des_rad = self.cur_yaw
+
+        # 记录上一周期预速度（用于逻辑判断）
+        try:
+            self.last_pre_kmh_sent = float(pre_kmh)
+        except Exception:
+            self.last_pre_kmh_sent = 0.0
+
+        # 距离量化：分辨率 0.2 m, 最大 150 * 0.2 = 30 m
         dist_raw = int(round(max(0.0, dist_to_next_m) / 0.2))
         dist_raw = max(0, min(150, dist_raw))
+
+        # 方向角编码：根据目标航向与当前航向的差值
         if self.cur_yaw is None:
             angle_raw = 180
         else:
-            heading_error = wrap_pi(hdg_cmd_for_vcu - self.cur_yaw)
-            steer_deg = -math.degrees(heading_error)
-            while steer_deg >= 180.0: steer_deg -= 360.0
-            while steer_deg < -180.0: steer_deg += 360.0
+            heading_error = wrap_pi(hdg_des_rad - self.cur_yaw)
+            steer_deg = -math.degrees(heading_error)  # 正为右转
+            while steer_deg >= 180.0:
+                steer_deg -= 360.0
+            while steer_deg < -180.0:
+                steer_deg += 360.0
             angle_raw = int(round(steer_deg + 180.0))
             angle_raw = max(0, min(359, angle_raw))
-        kmh = float(speed_cmd_mps) * 3.6
-        speed_raw = int(round((kmh + 10.0) / 0.5))
-        speed_raw = max(0, min(40, speed_raw))
-        pick_val = int(max(0, min(3, self.pick_state)))
-        unload_val = int(max(0, min(3, self.unload_state)))
+
+        # 预速度编码
+        try:
+            raw = (float(pre_kmh) - self.vcu_speed_raw_offset_kmh) / self.vcu_speed_raw_res_kmh_per_lsb
+            speed_raw = int(round(raw))
+        except Exception:
+            speed_raw = 0
+        speed_raw = max(0, min(255, speed_raw))
+
+        pick_val = int(max(0, min(1, self.pick_state)))
+        unload_val = int(max(0, min(1, self.unload_state)))
         remote_bit = 1 if self.remote_req_state else 0
         dump_bit = 1 if self.dump_state else 0
-        byte5 = (pick_val & 0x3) | ((unload_val & 0x3) << 2) | (remote_bit << 4) | (dump_bit << 5)
+        byte5 = (pick_val & 0x1) | ((unload_val & 0x1) << 1) | (remote_bit << 4) | (dump_bit << 5)
         estop_bit = 1 if self.drive_state == self.DS_ESTOP else 0
         drive_bit = 1 if self.drive_state == self.DS_RUNNING else 0
-        byte6 = (estop_bit & 0x1) | ((drive_bit & 0x1) << 1) | (0 << 2)
+        byte6 = (estop_bit & 0x1) | ((drive_bit & 0x1) << 1)
+
         payload = bytearray(8)
         struct.pack_into('<H', payload, 0, dist_raw)
         struct.pack_into('<H', payload, 2, angle_raw)
-        payload[4] = speed_raw; payload[5] = byte5; payload[6] = byte6; payload[7] = 0x00
+        payload[4] = speed_raw
+        payload[5] = byte5
+        payload[6] = byte6
+        payload[7] = 0x00
+
         try:
-            msg = can.Message(arbitration_id=self.can_id_status, data=payload, is_extended_id=self.can_extended)
+            msg = can.Message(arbitration_id=self.can_id_status,
+                              data=payload,
+                              is_extended_id=self.can_extended)
             self.can_bus.send(msg, timeout=0.001)
         except Exception:
             pass
