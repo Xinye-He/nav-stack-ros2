@@ -75,8 +75,8 @@ sudo docker run --runtime nvidia -it --rm \
 	-v /tmp/nv_jetson_model:/tmp/nv_jetson_model \
 	-v /var/run/dbus:/var/run/dbus \
 	-v /var/run/avahi-daemon/socket:/var/run/avahi-daemon/socket \
-	-v /home/xinye30/vcu_ctl_ws/lidar_ws:/root/lidar_ws \
-	-v /home/xinye30/vcu_ctl_ws/pid_follower_ws:/root/pid_follower_ws \
+	-v /home/xinye30/nav_stack_ros2/lidar_ws:/root/lidar_ws \
+	-v /home/xinye30/nav_stack_ros2/pid_follower_ws:/root/pid_follower_ws \
 	--volume /dev:/dev \
 	--device /dev \
 	--group-add dialout \
