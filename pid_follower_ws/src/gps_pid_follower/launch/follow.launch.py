@@ -7,8 +7,7 @@ import os
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('gps_pid_follower')
-    # 默认读取 share/gps_pid_follower/config/params.yaml
-    # 也支持环境变量 GPS_PID_PARAMS_FILE 覆盖；最后还可以通过命令行 params_file:=xxx 覆盖
+    # 支持环境变量 GPS_PID_PARAMS_FILE 覆盖；最后还可以通过命令行 params_file:=xxx 覆盖
     default_yaml = os.path.join(pkg_share, 'config', 'params.yaml')
     default_yaml_env = EnvironmentVariable(name='GPS_PID_PARAMS_FILE', default_value=default_yaml)
 
@@ -42,7 +41,6 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # 循迹节点：同时传 YAML 和 兜底 path_csv
         Node(
             package='gps_pid_follower',
             executable='waypoint_pid_follower',
