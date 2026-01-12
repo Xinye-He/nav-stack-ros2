@@ -123,6 +123,7 @@ class WaypointPIDFollower(Node):
 
     def __init__(self):
         super().__init__('waypoint_pid_follower')
+        self.debug_pub = self.create_publisher(Float32MultiArray, '/debug_status', 10)
 
         # I/O topics
         self.declare_parameter('path_csv', '')
@@ -225,10 +226,6 @@ class WaypointPIDFollower(Node):
         # SPIN入口预停车（0.5 s 0/0）
         self.declare_parameter('spin_entry_stop_enable', True)
         self.declare_parameter('spin_entry_stop_time_s', 0.5)
-
-        # 新增：调试发布器
-        from std_msgs.msg import Float32MultiArray
-        self.debug_pub = self.create_publisher(Float32MultiArray, '/debug_status', 10)
 
         # 读取参数
         path_csv = self.get_parameter('path_csv').get_parameter_value().string_value

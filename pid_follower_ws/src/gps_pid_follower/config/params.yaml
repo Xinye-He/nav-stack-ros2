@@ -1,30 +1,45 @@
 waypoint_pid_follower:
   ros__parameters:
-    # 路径与传感器
+    # 基础路径/话题
     path_csv: "/root/pid_follower_ws/data/points.csv"
-    gps_topic: "/fix"
+    gps_topic: "/fix_center"
     imu_topic: "/imu/data"
+    cmd_topic: "/cmd_vel"
 
+    # 航向来源（RTK）与偏置
     use_rtk_heading: true
-    rtk_heading_topic: "/heading_deg"
-    yaw_offset_deg: 90.0
+    rtk_heading_topic: "/vehicle_heading_deg"
+    yaw_offset_deg: 0.0
 
-    # 几何控制
-    lookahead_dist: 0.5
-    advance_when_close: 0.5
-    t_advance_min: 0.95
+    # /cmd_vel & DR（仅可视化/DR，不影响 VCU 速度）
+    target_speed: 2.0
+    lookahead_dist: 1.5
+    max_yaw_rate: 2.0
+    advance_when_close: 2.0
+    t_advance_min: 2.0
+    turn_in_place_deg: 55.0
+    min_speed: 0.5
+    cte_slow_k: 0.1
+    yaw_lpf_alpha: 0.4
 
-    # 任务点
-    use_csv_heading: true
+    k_heading: 1.3
+    kp_cte: 0.8
+    ki_cte: 0.0
+    kd_cte: 0.3
+    i_limit: 3.0
+
+    # CSV 航向与任务点
+    use_csv_heading: false
     align_heading_only_at_task_points: true
-    heading_align_dist: 1.0
-    wp_reached_dist: 1.0
-    wp_heading_tol_deg: 10.0
-    stop_turn_tol_deg: 10.0
+    heading_align_dist: 0.2
+    wp_reached_dist: 0.1
+    wp_heading_tol_deg: 50.0
+    stop_turn_tol_deg: 50.0
     wait_for_task_done: true
     task_done_topic: "/task_done"
 
-    # 坐标系
+
+    # 可视化/TF
     map_frame: "map"
     odom_frame: "odom"
     base_frame: "base_link"
@@ -37,43 +52,47 @@ waypoint_pid_follower:
     can_id_status: 0x18FED188
     link_remote_to_abort: true
 
-    # DR（可按需求开启/关闭）
-    dead_reckon: false
-    dr_alpha: 0.6
+    # DR
+    dead_reckon: true
+    dr_alpha: 0.3
+    dr_use_cmd_vel: true
     dr_use_gps_speed: true
+    dr_v_scale: 1.0
 
-    # VCU 离散控制
+    # VCU 三档角/三档速度
     vcu_enhanced_mode: true
+    vcu_angle_move_limit_deg: 25.0
+    vcu_angle_spin_enter_deg: 25.0   # ≥25°进入 SPIN
+    vcu_angle_spin_exit_deg: 18.0
+    vcu_angle_spin_cmd_deg: 20.0     # SPIN大角（±20°）
+    small_keep_fast_deg: 0.0         # FAST 固定 0°
+    angle_lpf_alpha_cmd: 0.0         # FSM为离散角，无需低通
 
-    # 速度档
+    # FSM 阈值（度）
+    fsm_fast_keep_deg: 6.0           # <6° -> FAST(8 km/h, 0°)
+    fsm_slow20_enter_deg: 12.0       # ≥12° -> SLOW 20°
+
+    # 三档角阈值/命令（度）
+    vcu_turn_small_thresh_deg: 10.0  # 0/10/20 分档阈值
+    vcu_turn_large_thresh_deg: 20.0
+    vcu_turn_small_cmd_deg: 10.0
+    vcu_turn_large_cmd_deg: 20.0
+
+    # 三档速度（km/h）
     vcu_speed_fast_kmh: 8.0
     vcu_speed_slow_kmh: 4.0
     vcu_speed_stop_kmh: 0.0
 
-    # 角度档 & 阈值（与你 stack 硬件保持一致）
-    vcu_angle_move_limit_deg: 20.0
-    vcu_turn_small_cmd_deg: 10.0
-    vcu_turn_large_cmd_deg: 20.0
-    vcu_turn_small_thresh_deg: 10.0
-    vcu_turn_large_thresh_deg: 25.0
-
-    # SPIN 进入/退出条件
-    vcu_angle_spin_enter_deg: 22.0
-    vcu_angle_spin_exit_deg: 18.0
-    vcu_angle_spin_cmd_deg: 20.0
-
-    # 拐角识别
-    strict_corner_mode: true
-    corner_start_dist: 1.0
-    corner_sharp_deg_strict: 45.0
-    strict_hold_deg: 2.0
-
-    # 误差阈值
-    emergency_spin_hdg_deg: 55.0
-    hdg_deadband_deg: 1.0
-    cte_deadband_m: 0.1
-    sign_hysteresis_deg: 1.0
-
-    # CAN 速度编码
+    # 预速度字段编码（1字节）：km/h = raw*0.5 + (-50)
     vcu_speed_raw_offset_kmh: -50.0
     vcu_speed_raw_res_kmh_per_lsb: 0.5
+
+    # 严格拐点与高速禁入区
+    strict_corner_mode: false
+    corner_start_dist: 1.0            # 1m 内 + 夹角≥45°判为拐点进入SPIN
+    corner_sharp_deg_strict: 45.0
+    fast_safe_dist_m: 5.0             # 离拐点或任务点 ≤5m 禁止FAST
+
+    # SPIN入口预停车：0.5s发 0 km/h, 0°
+    spin_entry_stop_enable: true
+    spin_entry_stop_time_s: 1.0

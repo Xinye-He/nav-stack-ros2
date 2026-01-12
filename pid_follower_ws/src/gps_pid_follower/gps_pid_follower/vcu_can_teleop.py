@@ -148,10 +148,10 @@ class VcuCanTeleop(Node):
         # 角度：优先选 20°按键（最近按下），否则 10°（最近按下），否则 0
         # 20°：u=-20, o=+20；10°：j=-10, l=+10
         candidates = []
-        if self.pressed_angle['u']: candidates.append(('u', -20.0))
-        if self.pressed_angle['o']: candidates.append(('o',  20.0))
-        if self.pressed_angle['j']: candidates.append(('j', -10.0))
-        if self.pressed_angle['l']: candidates.append(('l',  10.0))
+        if self.pressed_angle['u']: candidates.append(('u',  20.0))
+        if self.pressed_angle['o']: candidates.append(('o', -20.0))
+        if self.pressed_angle['j']: candidates.append(('j',  10.0))
+        if self.pressed_angle['l']: candidates.append(('l', -10.0))
 
         if not candidates:
             self.angle_deg = 0.0
@@ -185,10 +185,10 @@ class VcuCanTeleop(Node):
                 ch = sys.stdin.read(1).lower()
                 if ch == 'i': self.speed_kmh = 4.0; self._schedule_reset('speed')
                 elif ch == 'k': self.speed_kmh = 8.0; self._schedule_reset('speed')
-                elif ch == 'u': self.angle_deg = -20.0; self._schedule_reset('angle')
-                elif ch == 'o': self.angle_deg =  20.0; self._schedule_reset('angle')
-                elif ch == 'j': self.angle_deg = -10.0; self._schedule_reset('angle')
-                elif ch == 'l': self.angle_deg =  10.0; self._schedule_reset('angle')
+                elif ch == 'u': self.angle_deg =  20.0; self._schedule_reset('angle')
+                elif ch == 'o': self.angle_deg = -20.0; self._schedule_reset('angle')
+                elif ch == 'j': self.angle_deg =  10.0; self._schedule_reset('angle')
+                elif ch == 'l': self.angle_deg = -10.0; self._schedule_reset('angle')
                 elif ch == 'm': self.fixed_val ^= 1
                 elif ch == 'r': self.remote_val ^= 1
                 elif ch == 'y': self.unload_val = 0 if self.unload_val else 1

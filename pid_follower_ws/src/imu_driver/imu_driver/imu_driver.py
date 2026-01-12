@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import time
 import math
 import serial
@@ -9,19 +8,17 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from tf2_ros import TransformBroadcaster
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 from geometry_msgs.msg import TransformStamped
-
 
 # ================== 全局解析函数 ==================
 def hex_to_short(raw_data):
     """将字节流转换为四个有符号短整型"""
     return list(struct.unpack("hhhh", bytearray(raw_data)))
 
-
 def check_sum(data_buf, check_byte):
     """校验和：前10字节和 % 256 == 第10字节"""
     return sum(data_buf) & 0xff == check_byte
-
 
 # ================== IMU 驱动节点 ==================
 class IMUDriverNode(Node):
@@ -35,32 +32,17 @@ class IMUDriverNode(Node):
         # 创建发布器
         self.imu_pub = self.create_publisher(Imu, 'imu/data_raw', 10)
 
-        # 创建 TF 广播器
-        self.tf_broadcaster = TransformBroadcaster(self)
+        # 静态 TF：base_link -> imu_link
+        self.static_broadcaster = StaticTransformBroadcaster(self)
+        self.publish_base_to_imu_static()
 
-        # 传感器数据存储
-        self.acceleration = [0.0, 0.0, 0.0]
-        self.angular_velocity = [0.0, 0.0, 0.0]
-        self.angle_degree = [0.0, 0.0, 0.0]
-        self.has_orientation = False
-
-        # 串口参数
-        self.port_name = port_name
-        self.baud_rate = baud_rate
-
-        # 启动驱动线程
-        self.driver_thread = threading.Thread(target=self.driver_loop, daemon=True)
-        self.driver_thread.start()
-
-        # 广播 odom → base_link (1Hz 足够)
-        self.create_timer(10.0, self.publish_odom_to_base_link)
-
-    def publish_odom_to_base_link(self):
-        """广播 odom → base_link 的静态变换"""
+    def publish_base_to_imu_static(self):
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
+        t.header.frame_id = 'base_link'
+        t.child_frame_id = 'imu_link'
+
+        # 如果 IMU 就装在车体中心且轴对齐：都填 0/identity
         t.transform.translation.x = 0.0
         t.transform.translation.y = 0.0
         t.transform.translation.z = 0.0
@@ -68,7 +50,8 @@ class IMUDriverNode(Node):
         t.transform.rotation.y = 0.0
         t.transform.rotation.z = 0.0
         t.transform.rotation.w = 1.0
-        self.tf_broadcaster.sendTransform(t)
+
+        self.static_broadcaster.sendTransform(t)
 
     def driver_loop(self):
         """主循环：读串口并解析"""
