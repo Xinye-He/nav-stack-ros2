@@ -31,6 +31,8 @@ setup(
             'bale_pick_action = gps_pid_follower.bale_pick_action:main',
             'vcu_can_teleop = gps_pid_follower.vcu_can_teleop:main',
             'vcu_can_sender = gps_pid_follower.can_sender:main',
+            'rtk_center_from_nmea = gps_pid_follower.rtk_center_from_nmea:main',
+            'dr_odometry_node = gps_pid_follower.dr_odometry_node:main',
         ],
     },
 )
