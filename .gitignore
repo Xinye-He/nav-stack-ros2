@@ -29,11 +29,11 @@ Thumbs.db
 .DS_Store
 
 # rosbags and large recorded files
-*.db3
+#*.db3
 
 # temporary files from builds/install
 **/build/
 **/install/
 **/log/
-large_files/
+**large_files/
 lidar_ws/config/rslidar.pcap
