@@ -4,6 +4,8 @@
 build/
 install/
 log/
+.colcon/
+.colcon*/ 
 
 # Python
 __pycache__/
@@ -29,7 +31,12 @@ Thumbs.db
 .DS_Store
 
 # rosbags and large recorded files
-#*.db3
+*.bag
+*.db3
+*.mcap
+rosbag2_*/
+**/rosbag2_*/      # 任意子目录下的 rosbag2_* 录包
+**/data/rosbag2_*/ # 常见 data/rosbag2_* 目录
 
 # temporary files from builds/install
 **/build/
