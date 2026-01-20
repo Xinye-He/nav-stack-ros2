@@ -37,3 +37,8 @@ Thumbs.db
 **/log/
 **large_files/
 lidar_ws/config/rslidar.pcap
+
+# Ignore Docker build contexts and workspaces
+docker/dockerfile/ros2_ws/
+docker/dockerfile/wit_ros2_imu/
+lidar_ws/
