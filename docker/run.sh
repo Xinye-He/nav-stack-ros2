@@ -24,7 +24,7 @@ USER_COMMAND=""
 USER_VOLUME=""
 DEV_VOLUME=""
 ROS_DISTRO=""
-CONTAINER_IMAGE="xinye30/ucar-jetson:vcu_ctl1.1"
+CONTAINER_IMAGE="xinye30/ucar-jetson:nav-stack-ros2"
 
 # check for V4L2 devices
 V4L2_DEVICES=""
@@ -67,7 +67,7 @@ cat /proc/device-tree/model > /tmp/nv_jetson_model
 
 sudo docker run --runtime nvidia -it --rm \
 	--privileged \
-	--name vcu_ctl \
+	--name nav_stack_ros2 \
 	--network host \
 	-v /tmp/argus_socket:/tmp/argus_socket \
 	-v /etc/enctune.conf:/etc/enctune.conf \
@@ -75,8 +75,7 @@ sudo docker run --runtime nvidia -it --rm \
 	-v /tmp/nv_jetson_model:/tmp/nv_jetson_model \
 	-v /var/run/dbus:/var/run/dbus \
 	-v /var/run/avahi-daemon/socket:/var/run/avahi-daemon/socket \
-	-v /home/xinye30/nav_stack_ros2/lidar_ws:/root/lidar_ws \
-	-v /home/xinye30/nav_stack_ros2/pid_follower_ws:/root/pid_follower_ws \
+	-v /home/xinye30/nav_stack_ros2/stack_can_ws:/root/stack_can_ws \
 	--volume /dev:/dev \
 	--device /dev \
 	--group-add dialout \

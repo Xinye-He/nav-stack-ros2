@@ -1,11 +1,9 @@
-cmake_policy(SET CMP0144 NEW)
 cmake_minimum_required(VERSION 3.8)
 project(robosense_driver)
 
 # 编译告警（屏蔽常见但无害的告警）
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(
-    -Wno-dev
     -Wall -Wextra -Wpedantic
     -Wno-unused-parameter
     -Wno-missing-field-initializers

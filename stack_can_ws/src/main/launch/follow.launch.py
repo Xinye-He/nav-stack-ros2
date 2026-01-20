@@ -7,7 +7,7 @@ import os
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('gps_pid_follower')
+    pkg_share = get_package_share_directory('main')
 
     # 参数文件（优先级：命令行 > 环境变量 > 默认路径）
     default_yaml = os.path.join(pkg_share, 'config', 'params.yaml')
@@ -18,7 +18,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'params_file',
             default_value=default_yaml_env,
-            description='YAML parameters file for waypoint_pid_follower'
+            description='YAML parameters file for traj_waypoint_follower'
         ),
 
         # IMU（发布 imu/data_raw；你已修改：应发布 base_link->imu_link 静态TF；不要发布 odom->base_link）
@@ -49,7 +49,7 @@ def generate_launch_description():
         # RTK 双天线：把主天线点修正到车身中心 + 输出车头航向
         # 注意：方案B中不让它发TF（避免与 follower/dr_odometry 冲突）
         Node(
-            package='gps_pid_follower',
+            package='main',
             executable='rtk_center_from_nmea',  # 确保 setup.py 里 console_scripts 名字一致
             name='rtk_center_from_nmea',
             parameters=[{
@@ -79,7 +79,7 @@ def generate_launch_description():
 
         # DR里程计：发布 odom->base_link（连续），符合 REP-105
         Node(
-            package='gps_pid_follower',
+            package='main',
             executable='dr_odometry_node',  # 确保 setup.py 里 console_scripts 名字一致
             name='dr_odometry',
             parameters=[{
@@ -95,22 +95,21 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # PID循迹：用车身中心坐标 + 车头航向；并在内部发布 map->odom
-        Node(
-            package='gps_pid_follower',
-            executable='waypoint_pid_follower',
-            name='waypoint_pid_follower',
-            output='screen',
-            parameters=[
-                params_file,
 
-                # 这几个覆盖 YAML，确保用“中心坐标 + 车头航向”
-                {
-                    'gps_topic': '/fix_center',
-                    'use_rtk_heading': True,
-                    'rtk_heading_topic': '/vehicle_heading_deg',
-                    'gps_speed_topic': '/ground_speed_mps',
-                }
-            ]
+        Node(
+            package='main',
+            executable='traj_waypoint_follower',
+            name='traj_waypoint_follower',
+            output='screen',
+            parameters=[LaunchConfiguration('params_file')],
+        ),
+
+
+        Node(
+            package='main',
+            executable='stack_can_executor',
+            name='stack_can_executor',
+            output='screen',
+            parameters=[LaunchConfiguration('params_file')],
         ),
     ])

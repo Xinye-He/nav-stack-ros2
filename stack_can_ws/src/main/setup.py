@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 from glob import glob
 import os
 
-package_name = 'gps_pid_follower'
+package_name = 'main'
 
 data_files = [
     ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -19,20 +19,21 @@ setup(
     data_files=data_files,
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Your Name',
+    maintainer='Xinye',
     maintainer_email='you@example.com',
     description='Waypoint PID follower with VCU CAN control (pre-speed discrete & 3-level angle), RTK heading, action override.',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'waypoint_pid_follower = gps_pid_follower.waypoint_pid_follower:main',
-            'drive_key = gps_pid_follower.drive_key:main',
-            # 如未使用动作节点，注释下一行
-            'bale_pick_action = gps_pid_follower.bale_pick_action:main',
-            'vcu_can_teleop = gps_pid_follower.vcu_can_teleop:main',
-            'vcu_can_sender = gps_pid_follower.can_sender:main',
-            'rtk_center_from_nmea = gps_pid_follower.rtk_center_from_nmea:main',
-            'dr_odometry_node = gps_pid_follower.dr_odometry_node:main',
+            'traj_waypoint_follower = main.traj_waypoint_follower:main',
+            'stack_can_executor     = main.stack_can_executor:main',
+            'drive_key              = main.drive_key:main',
+            'teleop_key             = main.teleop_key:main',
+            'vcu_can_teleop         = main.vcu_can_teleop:main',
+            'vcu_can_sender         = main.can_sender:main',
+            'rtk_center_from_nmea   = main.rtk_center_from_nmea:main',
+            'dr_odometry_node       = main.dr_odometry_node:main',
+            'websocket_teleop_key   = main.websocket_teleop_key:main',
         ],
     },
 )
