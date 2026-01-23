@@ -37,3 +37,5 @@ Thumbs.db
 **/log/
 large_files/
 lidar_ws/config/rslidar.pcap
+lidar_ws/
+stack_can_ws/data/lidar_rosbag
