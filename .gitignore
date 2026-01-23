@@ -4,6 +4,8 @@
 build/
 install/
 log/
+.colcon/
+.colcon*/ 
 
 # Python
 __pycache__/
@@ -29,13 +31,23 @@ Thumbs.db
 .DS_Store
 
 # rosbags and large recorded files
+*.bag
 *.db3
+*.mcap
+rosbag2_*/
+**/rosbag2_*/      # 任意子目录下的 rosbag2_* 录包
+**/data/rosbag2_*/ # 常见 data/rosbag2_* 目录
 
 # temporary files from builds/install
 **/build/
 **/install/
 **/log/
-large_files/
-lidar_ws/config/rslidar.pcap
+**large_files/
 lidar_ws/
 stack_can_ws/data/lidar_rosbag
+
+
+# Ignore Docker build contexts and workspaces
+docker/dockerfile/ros2_ws/
+docker/dockerfile/wit_ros2_imu/
+lidar_ws/
