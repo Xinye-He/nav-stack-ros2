@@ -68,27 +68,16 @@ target_link_libraries(bale_estimator
   ${PCL_LIBRARIES}
 )
 
-add_executable(zhang src/zhang.cpp)
-ament_target_dependencies(zhang
-  rclcpp
-  sensor_msgs
-  geometry_msgs
-  visualization_msgs
-  pcl_conversions
-  tf2
-  tf2_ros
-  tf2_sensor_msgs
-)
-target_link_libraries(zhang
-  ${PCL_LIBRARIES}
-)
-
 add_executable(bale_detector src/bale_detector.cpp)
 ament_target_dependencies(bale_detector
   rclcpp
   sensor_msgs
   PCL
   pcl_conversions
+  tf2
+  tf2_ros
+  geometry_msgs
+  visualization_msgs
 )
 target_link_libraries(bale_detector
   ${PCL_LIBRARIES}
@@ -98,7 +87,6 @@ target_link_libraries(bale_detector
 install(TARGETS
   rsview
   bale_estimator
-  zhang
   bale_detector
   DESTINATION lib/${PROJECT_NAME}
 )

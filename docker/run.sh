@@ -75,6 +75,7 @@ sudo docker run --runtime nvidia -it --rm \
 	-v /tmp/nv_jetson_model:/tmp/nv_jetson_model \
 	-v /var/run/dbus:/var/run/dbus \
 	-v /var/run/avahi-daemon/socket:/var/run/avahi-daemon/socket \
+	-v /home/xinye30/nav_stack_ros2/lidar_ws:/root/lidar_ws \
 	-v /home/xinye30/nav_stack_ros2/stack_can_ws:/root/stack_can_ws \
 	--volume /dev:/dev \
 	--device /dev \

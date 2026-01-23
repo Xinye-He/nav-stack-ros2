@@ -112,4 +112,12 @@ def generate_launch_description():
             output='screen',
             parameters=[LaunchConfiguration('params_file')],
         ),
+
+        Node(
+            package='main',
+            executable='websocket_teleop_key',
+            name='websocket_teleop_key',
+            output='screen',
+            parameters=[LaunchConfiguration('params_file')],
+        ),
     ])

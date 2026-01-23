@@ -1,14 +1,45 @@
 #!/usr/bin/env python3
-
 import asyncio
 import json
 import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, UInt8
 from stack_msgs.msg import StackCommand
 import websockets
+
+
+HELP = """
+websocket_teleop_bridge: WebSocket teleop + mode control
+
+  全局行驶状态 (/drive_cmd):
+    x -> ESTOP (drive_cmd = 2) 再按 t 可退出 ESTOP，恢复 RUN + 手动 teleop
+    f -> TASK DONE (/task_done True)
+    t -> TOGGLE 自动循迹 / 手动 teleop (通过 /teleop_active)
+         teleop_active = True  -> 手动 teleop (通过 /stack_cmd/teleop 控制)
+         teleop_active = False -> 自动循迹 (跟随 /stack_cmd/traj)
+
+  Teleop 速度 (pre_speed_kmh)：
+    0 ->  0 km/h
+    4 ->  4 km/h
+    8 ->  8 km/h
+    1 -> -4 km/h (后退)
+
+  Teleop 方向 (angle_deg)：
+    a -> -10 deg (小左)
+    d -> +10 deg (小右)
+    q -> -20 deg (大左)
+    e -> +20 deg (大右)
+    c ->  0 deg  (直行)
+
+  作业位 (仅影响 teleop 的 StackCommand)：
+    j -> TOGGLE dump
+    k -> TOGGLE pick
+    l -> TOGGLE unload
+    h -> TOGGLE pick_action
+
+"""
 
 DEBOUNCE_SEC = 0.15
 
@@ -17,12 +48,20 @@ class WebSocketTeleopBridge(Node):
     def __init__(self):
         super().__init__('websocket_teleop_bridge')
 
-        # 发布和 teleop_key 一样的两个话题
-        self.pub_cmd = self.create_publisher(StackCommand, '/stack_cmd/teleop', 1)
-        self.pub_active = self.create_publisher(Bool, '/teleop_active', 1)
+        # 发布者
+        self.pub_drive_cmd = self.create_publisher(UInt8, '/drive_cmd', 1)
+        self.pub_task_done = self.create_publisher(Bool, '/task_done', 1)
+        self.pub_teleop_act = self.create_publisher(Bool, '/teleop_active', 1)
+        self.pub_teleop_cmd = self.create_publisher(
+            StackCommand, '/stack_cmd/teleop', 1
+        )
 
-        # teleop 内部状态，与 teleop_key 一致
-        self.teleop_active = False
+        # 内部状态
+        # 0=PAUSE(不用),1=RUN,2=ESTOP；默认 RUN
+        self.drive_state = 1
+        # True=手动 teleop, False=自动循迹；默认手动
+        self.teleop_active = True
+
         self.pre_speed_kmh = 0.0
         self.angle_deg = 0.0
         self.pick = False
@@ -32,19 +71,15 @@ class WebSocketTeleopBridge(Node):
 
         self.last_ts = {}
 
-        self.get_logger().info(
-            "WebSocket teleop bridge started. "
-            "Listening on ws://0.0.0.0:9010\n"
-            "Use JSON like {\"key\": \"t\"} / {\"key\": \"4\"} / {\"type\": \"cmd\", ...}"
-        )
+        self.get_logger().info(HELP)
 
-        # 初始发布一次
-        self.publish_active()
-        self.publish_cmd()
+        # 初始广播一次
+        self.publish_drive_cmd()
+        self.publish_teleop_active()
+        self.publish_teleop_cmd()
 
-    # ------------------- 和 teleop_key 一致的工具函数 -------------------
-
-    def debounce(self, key):
+    # --- 工具：去抖 ---
+    def debounce(self, key: str) -> bool:
         now = time.time()
         last = self.last_ts.get(key, 0.0)
         if (now - last) < DEBOUNCE_SEC:
@@ -52,51 +87,85 @@ class WebSocketTeleopBridge(Node):
         self.last_ts[key] = now
         return True
 
-    def publish_active(self):
+    # --- 发布函数 ---
+    def publish_drive_cmd(self):
+        msg = UInt8()
+        msg.data = int(self.drive_state)
+        self.pub_drive_cmd.publish(msg)
+        self.get_logger().info(f"/drive_cmd -> {self.drive_state}")
+
+    def publish_task_done(self):
+        msg = Bool()
+        msg.data = True
+        self.pub_task_done.publish(msg)
+        self.get_logger().info("TASK DONE sent")
+
+    def publish_teleop_active(self):
         msg = Bool()
         msg.data = bool(self.teleop_active)
-        self.pub_active.publish(msg)
-        self.get_logger().info(f"teleop_active -> {self.teleop_active}")
+        self.pub_teleop_act.publish(msg)
+        self.get_logger().info(
+            f"/teleop_active -> {self.teleop_active} "
+            "(True=手动 teleop, False=自动循迹)"
+        )
 
-    def publish_cmd(self):
+    def publish_teleop_cmd(self):
         msg = StackCommand()
         msg.pre_speed_kmh = float(self.pre_speed_kmh)
         msg.angle_deg = float(self.angle_deg)
-        msg.dist_to_target_m = 0.0  # teleop 不关心这个
+        msg.dist_to_target_m = 0.0
         msg.pick = bool(self.pick)
         msg.unload = bool(self.unload)
         msg.dump = bool(self.dump)
         msg.pick_action = bool(self.pick_action)
         msg.valid = True
-        self.pub_cmd.publish(msg)
+        self.pub_teleop_cmd.publish(msg)
         self.get_logger().info(
-            f"CMD: speed={self.pre_speed_kmh} km/h, angle={self.angle_deg} deg, "
-            f"pick={self.pick}, unload={self.unload}, dump={self.dump}, pick_action={self.pick_action}"
+            "TELEOP CMD: "
+            f"speed={self.pre_speed_kmh} km/h, angle={self.angle_deg} deg, "
+            f"pick={self.pick}, unload={self.unload}, "
+            f"dump={self.dump}, pick_action={self.pick_action}"
         )
 
+    # --- 按键语义（与 TeleopKey 一致，只是输入来自 WebSocket） ---
     def handle_key(self, c: str):
-        """复用 teleop_key 的按键语义，通过 WebSocket 传入 'key' 字段"""
-
         if not c:
             return
         c = c.lower()
 
-        # 原 teleop_key 的 q 是退出节点，这里改为忽略（避免远程把节点杀掉）
-        if c == 'q':
-            self.get_logger().info("received 'q' key over websocket (ignored)")
+        # -------- ESTOP --------
+        if c == 'x':
+            if not self.debounce(c):
+                return
+            self.drive_state = 2  # ESTOP
+            self.publish_drive_cmd()
             return
 
-        # 切换 teleop_active
+        # -------- 任务点完成 --------
+        if c == 'f':
+            if not self.debounce(c):
+                return
+            self.publish_task_done()
+            return
+
+        # -------- 模式切换 (t) --------
         if c == 't':
             if not self.debounce(c):
                 return
-            self.teleop_active = not self.teleop_active
-            self.publish_active()
-            self.publish_cmd()
+            if self.drive_state == 2:
+                # 从 ESTOP 恢复：设 RUN + 手动 teleop
+                self.drive_state = 1
+                self.publish_drive_cmd()
+                self.teleop_active = True
+                self.publish_teleop_active()
+            else:
+                # 在 RUN 状态下，在手动/自动之间切换
+                self.teleop_active = not self.teleop_active
+                self.publish_teleop_active()
             return
 
-        # 速度档：0 / 4 / 8 km/h
-        if c in ('0', '4', '8'):
+        # -------- Teleop 速度 --------
+        if c in ('0', '1', '4', '8'):
             if not self.debounce(c):
                 return
             if c == '0':
@@ -105,10 +174,12 @@ class WebSocketTeleopBridge(Node):
                 self.pre_speed_kmh = 4.0
             elif c == '8':
                 self.pre_speed_kmh = 8.0
-            self.publish_cmd()
+            elif c == '1':
+                self.pre_speed_kmh = -4.0  # 后退
+            self.publish_teleop_cmd()
             return
 
-        # 角度档：a/d/q/e/c
+        # -------- Teleop 方向 --------
         if c in ('a', 'd', 'q', 'e', 'c'):
             if not self.debounce(c):
                 return
@@ -122,10 +193,10 @@ class WebSocketTeleopBridge(Node):
                 self.angle_deg = 20.0
             elif c == 'c':
                 self.angle_deg = 0.0
-            self.publish_cmd()
+            self.publish_teleop_cmd()
             return
 
-        # 作业位：j/k/l/h
+        # -------- 作业位 --------
         if c in ('j', 'k', 'l', 'h'):
             if not self.debounce(c):
                 return
@@ -137,13 +208,12 @@ class WebSocketTeleopBridge(Node):
                 self.unload = not self.unload
             elif c == 'h':
                 self.pick_action = not self.pick_action
-            self.publish_cmd()
+            self.publish_teleop_cmd()
             return
 
         self.get_logger().warn(f"Unknown key: {c}")
 
-    # ------------------- WebSocket 处理 -------------------
-
+    # --- WebSocket 处理 ---
     async def handle_client(self, websocket, path):
         client_addr = websocket.remote_address
         self.get_logger().info(f"Client connected from {client_addr}")
@@ -155,34 +225,49 @@ class WebSocketTeleopBridge(Node):
                     self.get_logger().error("Received invalid JSON")
                     continue
 
-                # 1) 推荐：用 key 模式，复用 teleop_key 按键逻辑
-                #    例如：{"key": "t"}, {"key": "4"}, {"key": "a"}, {"key": "j"} ...
+                # 推荐：使用 {"key": "..."}，直接复用键盘 teleop 逻辑
                 if 'key' in data:
                     key = str(data['key'])[:1]  # 只取第一个字符
                     self.handle_key(key)
                     continue
 
-                # 2) 可选：显式设置 teleop_active
-                #    {"type": "active", "active": true}
-                #    或 {"type": "active", "toggle": true}
-                msg_type = data.get("type")
-                if msg_type == "active":
-                    if data.get("toggle", False):
-                        self.teleop_active = not self.teleop_active
-                    elif "active" in data:
-                        self.teleop_active = bool(data["active"])
-                    elif "value" in data:
-                        self.teleop_active = bool(data["value"])
-                    else:
-                        self.get_logger().warn(f"No 'active' field in {data}")
-                        continue
-                    self.publish_active()
-                    self.publish_cmd()
+                # 可选扩展：额外的显式指令
+                msg_type = data.get('type')
+
+                if msg_type == 'task_done':
+                    # {"type": "task_done"}
+                    if self.debounce('task_done'):
+                        self.publish_task_done()
                     continue
 
-                # 3) 可选：直接下发一条 StackCommand（部分字段也可以）
-                #    {"type": "cmd", "pre_speed_kmh": 4, "angle_deg": 10, "pick": true, ...}
-                if msg_type == "cmd":
+                if msg_type == 'drive':
+                    # {"type": "drive", "state": 1}  # 0/1/2
+                    state = data.get('state')
+                    if state in (0, 1, 2):
+                        self.drive_state = int(state)
+                        self.publish_drive_cmd()
+                    else:
+                        self.get_logger().warn(f"Invalid drive state: {state}")
+                    continue
+
+                if msg_type == 'active':
+                    # {"type": "teleop_active", "value": true}
+                    val = data.get('value')
+                    if isinstance(val, bool):
+                        if self.drive_state == 2 and val:
+                            self.drive_state = 1
+                            self.publish_drive_cmd()
+                            self.teleop_active = True
+                            self.publish_teleop_active()
+                        else:
+                            self.teleop_active = val
+                            self.publish_teleop_active()
+                    else:
+                        self.get_logger().warn(f"Invalid teleop_active value: {val}")
+                    continue
+
+                if msg_type == 'cmd':
+                    # {"type": "teleop_cmd", "pre_speed_kmh": 4, "angle_deg": 10, ...}
                     updated = False
                     if "pre_speed_kmh" in data:
                         self.pre_speed_kmh = float(data["pre_speed_kmh"])
@@ -204,12 +289,12 @@ class WebSocketTeleopBridge(Node):
                         updated = True
 
                     if updated:
-                        self.publish_cmd()
+                        self.publish_teleop_cmd()
                     else:
-                        self.get_logger().warn(f"No recognized fields in cmd: {data}")
+                        self.get_logger().warn(f"No recognized fields in teleop_cmd: {data}")
                     continue
 
-                self.get_logger().warn(f"Unknown message format: {data}")
+                self.get_logger().warn(f"Unknown message: {data}")
 
         except websockets.exceptions.ConnectionClosed:
             self.get_logger().info(f"Client {client_addr} disconnected")
@@ -222,9 +307,9 @@ class WebSocketTeleopBridge(Node):
             "0.0.0.0",
             9010,
             ping_interval=20,
-            ping_timeout=10
+            ping_timeout=10,
         )
-        self.get_logger().info("WebSocket server listening on ws://0.0.0.0:9010")
+        self.get_logger().info("WebSocket teleop bridge listening on ws://0.0.0.0:9010")
         await server.wait_closed()
 
 
@@ -232,7 +317,6 @@ def main(args=None):
     rclpy.init(args=args)
     node = WebSocketTeleopBridge()
 
-    # 只发布，不需要 spin executor
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(node.start_server())

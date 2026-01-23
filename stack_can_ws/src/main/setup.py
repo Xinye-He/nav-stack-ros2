@@ -27,10 +27,7 @@ setup(
         'console_scripts': [
             'traj_waypoint_follower = main.traj_waypoint_follower:main',
             'stack_can_executor     = main.stack_can_executor:main',
-            'drive_key              = main.drive_key:main',
             'teleop_key             = main.teleop_key:main',
-            'vcu_can_teleop         = main.vcu_can_teleop:main',
-            'vcu_can_sender         = main.can_sender:main',
             'rtk_center_from_nmea   = main.rtk_center_from_nmea:main',
             'dr_odometry_node       = main.dr_odometry_node:main',
             'websocket_teleop_key   = main.websocket_teleop_key:main',
