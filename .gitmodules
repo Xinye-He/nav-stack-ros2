@@ -1,0 +1,3 @@
+[submodule "stack_can_ws/src/robosense_driver/rs_driver"]
+	path = stack_can_ws/src/robosense_driver/rs_driver
+	url = https://github.com/RoboSense-LiDAR/rs_driver.git
